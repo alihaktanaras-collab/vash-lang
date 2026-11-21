@@ -1,0 +1,76 @@
+# arena { } bloğundan dışarı kaçan değerler doğru kopyalanıyor mu?
+# Her değer, blok bittikten (arena boşaltıldıktan) sonra da sağlam okunabilmeli.
+
+type Oyuncu {
+    ad: text
+    etiketler: [text] = []
+
+    fn change etiket_ekle(e: text) {
+        etiketler.add("{e}!")                   # metot nesnenin alanına arenada oluşan bir metin koyuyor
+    }
+
+    fn change yeniden_adlandir(yeni: text) {
+        ad = "{yeni} ({etiketler.length})"      # alan değiştirme (metodun içinden)
+    }
+}
+
+enum Olay {
+    Vurus(hasar: int, kim: text)
+    Bos
+}
+
+global var KAYIT: [text] = []
+var son_mesaj = ""
+
+fn kaydet(m: text) {
+    use change KAYIT
+    KAYIT.add("kayıt: {m}")                     # fonksiyon globale ekliyor (arena içinden çağrılınca)
+}
+
+fn global_degistir(m: text) {
+    use change son_mesaj
+    son_mesaj = "son: {m}"                      # fonksiyon ana programın değişkenini değiştiriyor
+}
+
+var ozet = ""
+var liste: [text] = []
+var sozluk: {text: [int]} = {}
+var oyuncu = Oyuncu(ad: "Ali")
+var oyuncular: [Oyuncu] = []
+var olaylar: [Olay] = []
+var sayac = 0
+
+repeat kare from 1 to 3 {
+    arena {
+        var gecici = "kare {kare}"                          # blok içi: arenada kalır
+        var parcalar = ["a{kare}", "b{kare}", "c{kare}"]
+        ozet = "{gecici} / {parcalar.join("-")}"            # dışarıdaki değişkene: kopyalanmalı
+        liste.add("eleman {kare}")                          # dışarıdaki listeye: kopyalanmalı
+        sozluk["k{kare}"] = [kare, kare * 10]               # dışarıdaki sözlüğe: kopyalanmalı
+        oyuncu.etiket_ekle("e{kare}")                       # metot alanına
+        oyuncu.yeniden_adlandir("Oyuncu{kare}")
+        oyuncular.add(Oyuncu(ad: "o{kare}", etiketler: parcalar))   # nesne + içindeki liste
+        olaylar.add(Olay.Vurus(hasar: kare, kim: "v{kare}"))
+        kaydet(gecici)
+        global_degistir(gecici)
+        sayac = sayac + kare                                 # sayılar: kopyaya gerek yok
+        arena {                                              # iç içe arena
+            var ic = "iç {kare}"
+            ozet = "{ozet} + {ic}"
+        }
+        match olaylar[olaylar.length] {
+            Vurus(hasar, kim) { liste.add("{kim}:{hasar}") }
+            Bos { print("boş") }
+        }
+    }
+}
+
+print(ozet)
+print(liste)
+print(sozluk)
+print(oyuncu)
+print(oyuncular)
+print(olaylar)
+print(KAYIT)
+print(son_mesaj)
+print(sayac)

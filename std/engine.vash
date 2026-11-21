@@ -1,0 +1,960 @@
+# engine: Vash Engine 2D — scenes, things, ready-made behaviors, collisions
+#
+#   import engine
+#   engine.run("my_game.json")                  # opens a window and plays the scene
+#
+# With your own code:
+#   import engine
+#   import graphics
+#   var game = engine.load("my_game.json") else: engine.Game()
+#   engine.open(game, "My game")
+#   game.prepare("")
+#   repeat while graphics.is_open() {
+#       game.update(graphics.frame_time())
+#       var p = game.find("Player")
+#       if p > 0 and game.things[p].y < 100.0 { game.say("High up!", 1.0) }
+#       game.show()
+#   }
+#   graphics.close_window()
+#
+# Behaviors (Behavior.kind):
+#   platformer  arrows / A D to walk (speed), Space / W / Up to jump (power)
+#   topdown     walks in four directions (speed)
+#   gravity     falls and lands on solid things
+#   patrol      walks left and right (speed); turns at walls and edges
+#   enemy       hurts the player, but dies when the player lands on it
+#   danger      hurts the player (the player starts again)
+#   collect     the player picks it up: score + power
+#   goal        the player wins: shows the message in 'value'
+#   (collect, enemy, danger and goal play the file in 'sound'; enemy's 'value' is the sound when it hurts)
+#   float       moves softly up and down (speed, power = height)
+#   camera      the camera follows this thing (otherwise the player)
+import graphics
+import json
+import math
+
+type Behavior {
+    kind: text
+    speed: float = 0.0
+    power: float = 0.0
+    value: text = ""                   # goal: the message
+    sound: text = ""                   # sound file played when it happens
+}
+
+type Thing {
+    name: text
+    kind: text = "box"                 # box | image | text
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 48.0
+    height: float = 48.0
+    color: text = "#ffffff"
+    image: text = ""
+    frames: int = 1                    # animation pictures side by side in the image
+    frame_speed: float = 8.0           # pictures per second
+    tiled: bool = false                # repeat the image to fill the box (ground)
+    label: text = ""                   # text things; {score} shows the score
+    text_size: float = 28.0
+    on_screen: bool = false            # stays on the screen (score, lives), not in the world
+    layer: int = 0
+    solid: bool = false
+    hidden: bool = false
+    behaviors: [Behavior] = []
+    # while playing
+    vx: float = 0.0
+    vy: float = 0.0
+    on_ground: bool = false
+    alive: bool = true
+    facing_left: bool = false
+    moving: bool = false
+    anim: float = 0.0
+    start_x: float = 0.0
+    start_y: float = 0.0
+    hit_wall: bool = false
+}
+
+type Layer {                           # background picture that moves slower than the world
+    image: text
+    speed: float = 0.5                 # 0: stays still, 1: moves with the world
+    y: float = 0.0
+}
+
+type Particle {
+    x: float
+    y: float
+    vx: float
+    vy: float
+    life: float
+    size: float
+    color: graphics.Color
+}
+
+type Game {
+    title: text = "Vash game"
+    view_width: float = 960.0
+    view_height: float = 540.0
+    world_width: float = 1920.0
+    world_height: float = 540.0
+    sky_top: text = "#5fcde4"
+    sky_bottom: text = "#d4f1ff"
+    gravity: float = 1600.0
+    pixel_scale: float = 3.0           # how big one pixel of an image is drawn
+    layers: [Layer] = []
+    things: [Thing] = []
+    # while playing
+    score: int = 0
+    message: text = ""
+    message_time: float = 0.0
+    finished: bool = false
+    camera_x: float = 0.0
+    camera_y: float = 0.0
+    clock: float = 0.0
+    shake: float = 0.0
+    particles: [Particle] = []
+    textures: {text: graphics.Texture} = {}
+    sounds: {text: graphics.Sound} = {}
+    fonts: {text: graphics.Font} = {}
+    folder: text = ""
+
+    # Index of the thing with this name (0: none)
+    fn find(name: text) -> int {
+        repeat i from 1 to things.length {
+            if things[i].name is name {
+                return i
+            }
+        }
+        return 0
+    }
+
+    # Index of the player (the first platformer / topdown thing; 0: none)
+    fn player() -> int {
+        repeat i from 1 to things.length {
+            if has_behavior(things[i], "platformer") or has_behavior(things[i], "topdown") {
+                return i
+            }
+        }
+        return 0
+    }
+
+    fn change say(content: text, seconds: float) {
+        message = content
+        message_time = seconds
+    }
+
+    # Load pictures, sounds and the font, and get ready to play
+    fn change prepare(project_folder: text) {
+        use sound
+        use screen
+        use files
+        folder = project_folder
+        load_assets()
+        repeat i from 1 to things.length {
+            things[i].start_x = things[i].x
+            things[i].start_y = things[i].y
+        }
+        reset()
+    }
+
+    # Load the pictures and sounds that are not loaded yet
+    fn change load_assets() {
+        use sound
+        use screen
+        use files
+        repeat i from 1 to things.length {
+            if things[i].image.length > 0 {
+                _load_texture(things[i].image)
+            }
+            repeat j from 1 to things[i].behaviors.length {
+                var v = things[i].behaviors[j].sound
+                if v.length > 0 {
+                    _load_sound(v)
+                }
+            }
+        }
+        repeat i from 1 to layers.length {
+            _load_texture(layers[i].image)
+        }
+        if not fonts.has("ui") {
+            var f = graphics.load_font("C:/Windows/Fonts/segoeuib.ttf", 48)
+            if not graphics.font_ok(f) {
+                f = graphics.default_font()
+            }
+            fonts["ui"] = f
+        }
+    }
+
+    fn change _load_texture(file: text) {
+        use screen
+        if file.length is 0 or textures.has(file) {
+            return
+        }
+        var t = graphics.load_texture(path(folder, file))
+        if graphics.texture_ok(t) {
+            graphics.set_smooth(t, false)
+        }
+        textures[file] = t
+    }
+
+    fn change _load_sound(file: text) {
+        use sound
+        use screen
+        if sounds.has(file) {
+            return
+        }
+        sounds[file] = graphics.load_sound(path(folder, file))
+    }
+
+    # Everything back to the start (after prepare)
+    fn change reset() {
+        repeat i from 1 to things.length {
+            things[i].x = things[i].start_x
+            things[i].y = things[i].start_y
+            things[i].vx = 0.0
+            things[i].vy = 0.0
+            things[i].alive = true
+            things[i].on_ground = false
+            things[i].facing_left = false
+            things[i].anim = 0.0
+        }
+        score = 0
+        message = ""
+        message_time = 0.0
+        finished = false
+        particles = []
+        clock = 0.0
+        _aim_camera(1.0)
+    }
+
+    # One step of the game: behaviors, movement, collisions, camera
+    fn change update(frame_seconds: float) {
+        use sound
+        use screen
+        var dt = frame_seconds
+        if dt > 0.05 {
+            dt = 0.05
+        }
+        clock = clock + dt
+        if message_time > 0.0 {
+            message_time = message_time - dt
+        }
+        if shake > 0.0 {
+            shake = shake - dt
+        }
+        if finished {
+            if graphics.key_pressed(graphics.KEY_ENTER) or graphics.key_pressed(graphics.KEY_A + 17) {
+                reset()
+            }
+            _update_particles(dt)
+            return
+        }
+        repeat i from 1 to things.length {
+            if things[i].alive {
+                _behave(i, dt)
+            }
+        }
+        var p = player()
+        if p > 0 {
+            _touches(p)
+        }
+        _update_particles(dt)
+        _aim_camera(dt * 6.0)
+    }
+
+    fn change _behave(i: int, dt: float) {
+        use sound
+        use screen
+        things[i].anim = things[i].anim + dt
+        var bs = things[i].behaviors
+        var moves = false
+        var falls = false
+        repeat j from 1 to bs.length {
+            var b = bs[j]
+            if b.kind is "platformer" {
+                moves = true
+                falls = true
+                var yon = 0.0
+                if graphics.key_down(graphics.KEY_RIGHT) or graphics.key_down(graphics.KEY_D) {
+                    yon = yon + 1.0
+                }
+                if graphics.key_down(graphics.KEY_LEFT) or graphics.key_down(graphics.KEY_A) {
+                    yon = yon - 1.0
+                }
+                things[i].vx = yon * b.speed
+                things[i].moving = yon is not 0.0
+                if yon < 0.0 {
+                    things[i].facing_left = true
+                } else if yon > 0.0 {
+                    things[i].facing_left = false
+                }
+                var zipla = graphics.key_pressed(graphics.KEY_SPACE) or graphics.key_pressed(graphics.KEY_UP) or graphics.key_pressed(graphics.KEY_W)
+                if zipla and things[i].on_ground {
+                    things[i].vy = -b.power
+                    things[i].on_ground = false
+                }
+                var tutuyor = graphics.key_down(graphics.KEY_SPACE) or graphics.key_down(graphics.KEY_UP) or graphics.key_down(graphics.KEY_W)
+                if not tutuyor and things[i].vy < 0.0 {
+                    things[i].vy = things[i].vy * 0.85        # short press: lower jump
+                }
+            } else if b.kind is "topdown" {
+                moves = true
+                var dx = 0.0
+                var dy = 0.0
+                if graphics.key_down(graphics.KEY_RIGHT) or graphics.key_down(graphics.KEY_D) {
+                    dx = 1.0
+                }
+                if graphics.key_down(graphics.KEY_LEFT) or graphics.key_down(graphics.KEY_A) {
+                    dx = -1.0
+                }
+                if graphics.key_down(graphics.KEY_DOWN) or graphics.key_down(graphics.KEY_S) {
+                    dy = 1.0
+                }
+                if graphics.key_down(graphics.KEY_UP) or graphics.key_down(graphics.KEY_W) {
+                    dy = -1.0
+                }
+                if dx is not 0.0 and dy is not 0.0 {
+                    dx = dx * 0.7071
+                    dy = dy * 0.7071
+                }
+                things[i].vx = dx * b.speed
+                things[i].vy = dy * b.speed
+                things[i].moving = dx is not 0.0 or dy is not 0.0
+                if dx < 0.0 {
+                    things[i].facing_left = true
+                } else if dx > 0.0 {
+                    things[i].facing_left = false
+                }
+            } else if b.kind is "gravity" {
+                moves = true
+                falls = true
+            } else if b.kind is "patrol" {
+                moves = true
+                things[i].moving = true
+                var hiz = b.speed
+                if things[i].facing_left {
+                    hiz = -hiz
+                }
+                # turn at walls and at the edge of the ground
+                var t = things[i]
+                var dondu = t.hit_wall
+                if t.on_ground {
+                    var on_x = t.x + t.width + 2.0
+                    if t.facing_left {
+                        on_x = t.x - 2.0
+                    }
+                    if not _solid_at(on_x, t.y + t.height + 4.0, i) {
+                        dondu = true
+                    }
+                }
+                if dondu {
+                    things[i].facing_left = not t.facing_left
+                    hiz = -hiz
+                }
+                things[i].hit_wall = false
+                things[i].vx = hiz
+            } else if b.kind is "float" {
+                var yukseklik = b.power
+                if yukseklik is 0.0 {
+                    yukseklik = 6.0
+                }
+                var h = b.speed
+                if h is 0.0 {
+                    h = 3.0
+                }
+                things[i].y = things[i].start_y + math.sin(clock * h + things[i].start_x * 0.01) * yukseklik
+            }
+        }
+        if falls {
+            things[i].vy = things[i].vy + gravity * dt
+            if things[i].vy > 1100.0 {
+                things[i].vy = 1100.0
+            }
+        }
+        if moves {
+            _move(i, dt)
+        }
+    }
+
+    # Move by speed; solid things stop the movement
+    fn change _move(i: int, dt: float) {
+        use sound
+        use screen
+        var t = things[i]
+        var nx = t.x + t.vx * dt
+        if nx < 0.0 {
+            nx = 0.0
+            things[i].hit_wall = true
+        }
+        if nx + t.width > world_width {
+            nx = world_width - t.width
+            things[i].hit_wall = true
+        }
+        repeat k from 1 to things.length {
+            var s = things[k]
+            if k is not i and s.solid and s.alive and _overlap(nx, t.y, t.width, t.height, s.x, s.y, s.width, s.height) {
+                if t.vx > 0.0 {
+                    nx = s.x - t.width
+                } else if t.vx < 0.0 {
+                    nx = s.x + s.width
+                }
+                things[i].hit_wall = true
+            }
+        }
+        things[i].x = nx
+        var ny = t.y + t.vy * dt
+        var yerde = false
+        repeat k from 1 to things.length {
+            var s = things[k]
+            if k is not i and s.solid and s.alive and _overlap(nx, ny, t.width, t.height, s.x, s.y, s.width, s.height) {
+                if t.vy > 0.0 {
+                    ny = s.y - t.height
+                    yerde = true
+                } else if t.vy < 0.0 {
+                    ny = s.y + s.height
+                }
+                things[i].vy = 0.0
+            }
+        }
+        things[i].y = ny
+        things[i].on_ground = yerde
+        if ny > world_height + 300.0 {              # fell out of the world
+            if has_behavior(things[i], "platformer") or has_behavior(things[i], "topdown") {
+                _hurt(i, "")
+            } else {
+                things[i].alive = false
+            }
+        }
+    }
+
+    fn _solid_at(px: float, py: float, haric: int) -> bool {
+        repeat k from 1 to things.length {
+            var s = things[k]
+            if k is not haric and s.solid and s.alive and px >= s.x and px <= s.x + s.width and py >= s.y and py <= s.y + s.height {
+                return true
+            }
+        }
+        return false
+    }
+
+    # The player touches things: collect, danger, enemy, goal
+    fn change _touches(p: int) {
+        use sound
+        use screen
+        repeat k from 1 to things.length {
+            var o = things[k]
+            var pl = things[p]
+            if k is not p and o.alive and not o.on_screen and _overlap(pl.x, pl.y, pl.width, pl.height, o.x, o.y, o.width, o.height) {
+                repeat j from 1 to o.behaviors.length {
+                    var b = o.behaviors[j]
+                    if b.kind is "collect" {
+                        things[k].alive = false
+                        score = score + int(b.power)
+                        _play(b.sound)
+                        _burst(o.x + o.width / 2.0, o.y + o.height / 2.0, color("#ffd34d"), 14)
+                    } else if b.kind is "danger" {
+                        _hurt(p, b.sound)
+                    } else if b.kind is "enemy" {
+                        var ayak = pl.y + pl.height
+                        if pl.vy > 0.0 and ayak < o.y + o.height * 0.6 {
+                            things[k].alive = false
+                            things[p].vy = -520.0
+                            score = score + int(b.power)
+                            _play(b.sound)
+                            _burst(o.x + o.width / 2.0, o.y + o.height / 2.0, graphics.WHITE, 18)
+                            shake = 0.15
+                        } else {
+                            _hurt(p, b.value)
+                        }
+                    } else if b.kind is "goal" {
+                        finished = true
+                        var yazi = b.value
+                        if yazi.length is 0 {
+                            yazi = "Tebrikler!"
+                        }
+                        say(yazi, 99999.0)
+                        _play(b.sound)
+                        _burst(o.x + o.width / 2.0, o.y, color("#ffd34d"), 40)
+                    }
+                }
+            }
+        }
+    }
+
+    fn change _hurt(p: int, sound: text) {
+        use sound
+        use screen
+        _play(sound)
+        _burst(things[p].x + things[p].width / 2.0, things[p].y + things[p].height / 2.0, color("#ff5a5a"), 24)
+        things[p].x = things[p].start_x
+        things[p].y = things[p].start_y
+        things[p].vx = 0.0
+        things[p].vy = 0.0
+        shake = 0.3
+        say("Ah! Baştan...", 1.2)
+        _aim_camera(1.0)
+    }
+
+    fn _play(file: text) {
+        use sound
+        use screen
+        if sounds.has(file) {
+            graphics.play_sound(sounds[file])
+        }
+    }
+
+    fn change _burst(x: float, y: float, c: graphics.Color, n: int) {
+        repeat k from 1 to n {
+            var aci = random(0.0 to math.TAU)
+            var hiz = random(80.0 to 320.0)
+            particles.add(Particle(x: x, y: y, vx: math.cos(aci) * hiz, vy: math.sin(aci) * hiz - 120.0, life: random(0.4 to 0.9), size: random(3.0 to 7.0), color: c))
+        }
+    }
+
+    fn change _update_particles(dt: float) {
+        var kalan: [Particle] = []
+        repeat k from 1 to particles.length {
+            var q = particles[k]
+            q.life = q.life - dt
+            if q.life > 0.0 {
+                q.vy = q.vy + 900.0 * dt
+                q.x = q.x + q.vx * dt
+                q.y = q.y + q.vy * dt
+                kalan.add(q)
+            }
+        }
+        particles = kalan
+    }
+
+    fn change _aim_camera(amount: float) {
+        var hedef = 0
+        repeat i from 1 to things.length {
+            if hedef is 0 and has_behavior(things[i], "camera") {
+                hedef = i
+            }
+        }
+        if hedef is 0 {
+            hedef = player()
+        }
+        if hedef is 0 {
+            return
+        }
+        var t = things[hedef]
+        var cx = math.clamp(t.x + t.width / 2.0 - view_width / 2.0, 0.0, math.max(0.0, world_width - view_width))
+        var cy = math.clamp(t.y + t.height / 2.0 - view_height / 2.0, 0.0, math.max(0.0, world_height - view_height))
+        var a = math.clamp(amount, 0.0, 1.0)
+        camera_x = camera_x + (cx - camera_x) * a
+        camera_y = camera_y + (cy - camera_y) * a
+    }
+
+    # ---------- drawing ----------
+    # Draw the game into the box rx, ry, rw, rh on the window (keeps the view's shape)
+    fn draw(rx: float, ry: float, rw: float, rh: float) {
+        use screen
+        var zoom = rw / view_width
+        var sx = 0.0
+        var sy = 0.0
+        if shake > 0.0 {
+            sx = random(-6.0 to 6.0)
+            sy = random(-6.0 to 6.0)
+        }
+        draw_with(rx, ry, rw, rh, camera_x + sx, camera_y + sy, zoom)
+    }
+
+    # Draw with any camera: cam_x, cam_y = the world point at the top left, zoom = screen pixels per world pixel
+    fn draw_with(rx: float, ry: float, rw: float, rh: float, cam_x: float, cam_y: float, zoom: float) {
+        use screen
+        graphics.clip_begin(rx, ry, rw, rh)
+        graphics.draw_gradient(rx, ry, rw, rh, color(sky_top), color(sky_bottom))
+        repeat i from 1 to layers.length {
+            _draw_layer(layers[i], rx, ry, rw, rh, cam_x, cam_y, zoom)
+        }
+        var kam = graphics.camera(rx, ry, cam_x, cam_y, zoom)
+        graphics.camera_begin(kam)
+        var sira = draw_order()
+        repeat k from 1 to sira.length {
+            var t = things[sira[k]]
+            if t.alive and not t.hidden and not t.on_screen {
+                draw_thing(t)
+            }
+        }
+        repeat k from 1 to particles.length {
+            var q = particles[k]
+            graphics.draw_rectangle(q.x - q.size / 2.0, q.y - q.size / 2.0, q.size, q.size, graphics.fade(q.color, math.min(1.0, q.life * 2.0)))
+        }
+        graphics.camera_end()
+        repeat k from 1 to sira.length {
+            var t = things[sira[k]]
+            if t.alive and not t.hidden and t.on_screen {
+                _draw_text(t, rx + t.x * zoom, ry + t.y * zoom, t.text_size * zoom)
+            }
+        }
+        if message_time > 0.0 and message.length > 0 {
+            _draw_message(rx, ry, rw, rh, zoom)
+        }
+        graphics.clip_end()
+    }
+
+    # Indexes of the things, lowest layer first
+    fn draw_order() -> [int] {
+        var sira: [int] = []
+        repeat i from 1 to things.length {
+            sira.add(i)
+        }
+        var l = things
+        sira.sort(by: fn(a, b) => l[a].layer < l[b].layer)
+        return sira
+    }
+
+    fn _draw_layer(k: Layer, rx: float, ry: float, rw: float, rh: float, cam_x: float, cam_y: float, zoom: float) {
+        use screen
+        if not textures.has(k.image) {
+            return
+        }
+        var t = textures[k.image]
+        if t.width is 0 {
+            return
+        }
+        var genislik = float(t.width) * pixel_scale * zoom
+        var yukseklik = float(t.height) * pixel_scale * zoom
+        var kayma = cam_x * k.speed * zoom
+        var bas = -(kayma - math.floor(kayma / genislik) * genislik)
+        var y = ry + (k.y - cam_y * k.speed) * zoom
+        var x = rx + bas
+        repeat while x < rx + rw {
+            graphics.draw_sprite(t, 0.0, 0.0, float(t.width), float(t.height), x, y, genislik + 1.0, yukseklik, 0.0, false, graphics.WHITE)
+            x = x + genislik
+        }
+    }
+
+    # Which picture of the animation to show (from 0)
+    fn frame_of(t: Thing) -> int {
+        if t.frames <= 1 {
+            return 0
+        }
+        var adim = int(t.anim * t.frame_speed)
+        if has_behavior(t, "platformer") and t.frames >= 3 {
+            if not t.on_ground {
+                return t.frames - 1
+            }
+            if t.moving {
+                return 1 + adim % (t.frames - 2)
+            }
+            return 0
+        }
+        return adim % t.frames
+    }
+
+    # Draw one thing in world positions (inside camera_begin / camera_end)
+    fn draw_thing(t: Thing) {
+        use screen
+        if t.kind is "text" {
+            _draw_text(t, t.x, t.y, t.text_size)
+            return
+        }
+        if t.kind is "image" and textures.has(t.image) {
+            var r = textures[t.image]
+            if r.width > 0 {
+                var fw = float(r.width) / float(t.frames)
+                var fh = float(r.height)
+                if t.tiled {
+                    _draw_tiled(t, r, fw, fh)
+                } else {
+                    var kare = float(frame_of(t))
+                    graphics.draw_sprite(r, kare * fw, 0.0, fw, fh, t.x, t.y, t.width, t.height, 0.0, t.facing_left, color(t.color))
+                }
+                return
+            }
+        }
+        graphics.draw_rectangle(t.x, t.y, t.width, t.height, color(t.color))
+    }
+
+    # Ground: picture 1 on the top row, picture 2 below (if there is one)
+    fn _draw_tiled(t: Thing, r: graphics.Texture, fw: float, fh: float) {
+        use screen
+        var tw = fw * pixel_scale
+        var th = fh * pixel_scale
+        var y = t.y
+        var satir = 0
+        repeat while y < t.y + t.height - 0.5 {
+            var kare = 0.0
+            if satir > 0 and t.frames >= 2 {
+                kare = 1.0
+            }
+            var h = math.min(th, t.y + t.height - y)
+            var x = t.x
+            repeat while x < t.x + t.width - 0.5 {
+                var w = math.min(tw, t.x + t.width - x)
+                graphics.draw_sprite(r, kare * fw, 0.0, fw * w / tw, fh * h / th, x, y, w, h, 0.0, false, color(t.color))
+                x = x + tw
+            }
+            y = y + th
+            satir = satir + 1
+        }
+    }
+
+    fn _draw_text(t: Thing, x: float, y: float, size: float) {
+        use screen
+        var yazi = t.label.replace("\{score\}", text(score))
+        if fonts.has("ui") {
+            var f = fonts["ui"]
+            graphics.draw_text_font(f, yazi, x + size * 0.06, y + size * 0.08, size, graphics.rgba(0, 0, 0, 120))
+            graphics.draw_text_font(f, yazi, x, y, size, color(t.color))
+        } else {
+            graphics.draw_text(yazi, int(x), int(y), int(size), color(t.color))
+        }
+    }
+
+    fn _draw_message(rx: float, ry: float, rw: float, rh: float, zoom: float) {
+        use screen
+        var boy = 40.0 * zoom
+        var alt = ""
+        if finished {
+            alt = "Puan: {score}   ·   Yeniden oynamak için Enter"
+        }
+        var g = boy * 6.0
+        if fonts.has("ui") {
+            g = math.max(graphics.text_width_font(fonts["ui"], message, boy), graphics.text_width_font(fonts["ui"], alt, boy * 0.45)) + boy * 1.6
+        }
+        var h = boy * 2.0
+        if alt.length > 0 {
+            h = boy * 2.8
+        }
+        var x = rx + (rw - g) / 2.0
+        var y = ry + (rh - h) / 2.0
+        graphics.draw_rounded(x, y, g, h, boy * 0.4, graphics.rgba(20, 22, 34, 220))
+        graphics.draw_rounded_outline(x, y, g, h, boy * 0.4, 2.0, graphics.rgba(255, 255, 255, 60))
+        if fonts.has("ui") {
+            var f = fonts["ui"]
+            var mg = graphics.text_width_font(f, message, boy)
+            graphics.draw_text_font(f, message, x + (g - mg) / 2.0, y + boy * 0.45, boy, graphics.WHITE)
+            if alt.length > 0 {
+                var ag = graphics.text_width_font(f, alt, boy * 0.45)
+                graphics.draw_text_font(f, alt, x + (g - ag) / 2.0, y + boy * 1.75, boy * 0.45, graphics.rgb(190, 196, 220))
+            }
+        }
+    }
+
+    # The whole window: the game fitted in the middle (black bars if the shape differs)
+    fn show() {
+        use screen
+        graphics.begin_drawing(graphics.BLACK)
+        var sw = float(graphics.screen_width())
+        var sh = float(graphics.screen_height())
+        var olcek = math.min(sw / view_width, sh / view_height)
+        var w = view_width * olcek
+        var h = view_height * olcek
+        draw((sw - w) / 2.0, (sh - h) / 2.0, w, h)
+        graphics.end_drawing()
+    }
+}
+
+# ---------- helpers ----------
+fn has_behavior(t: Thing, kind: text) -> bool {
+    repeat i from 1 to t.behaviors.length {
+        if t.behaviors[i].kind is kind {
+            return true
+        }
+    }
+    return false
+}
+
+fn _overlap(ax: float, ay: float, aw: float, ah: float, bx: float, by: float, bw: float, bh: float) -> bool {
+    return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+}
+
+fn path(folder: text, file: text) -> text {
+    if folder.length is 0 or file.contains(":") or file.starts_with("/") {
+        return file
+    }
+    return "{folder}/{file}"
+}
+
+# The folder part of a file path ("" if none)
+fn folder_of(file: text) -> text {
+    var duz = file.replace("\\", "/")
+    var parcalar = duz.split("/")
+    if parcalar.length <= 1 {
+        return ""
+    }
+    var bas: [text] = []
+    repeat i from 1 to parcalar.length - 1 {
+        bas.add(parcalar[i])
+    }
+    return bas.join("/")
+}
+
+fn _hex(c: text) -> int {
+    var k = code(c)
+    if k >= 48 and k <= 57 {
+        return k - 48
+    }
+    if k >= 97 and k <= 102 {
+        return k - 87
+    }
+    if k >= 65 and k <= 70 {
+        return k - 55
+    }
+    return 0
+}
+
+# "#rrggbb" or "#rrggbbaa" → color
+fn color(hex: text) -> graphics.Color {
+    var s = hex
+    if s.starts_with("#") and s.length > 1 {
+        s = s[2 to s.length]
+    }
+    if s.length < 6 {
+        return graphics.WHITE
+    }
+    var a = 255
+    if s.length >= 8 {
+        a = _hex(s[7]) * 16 + _hex(s[8])
+    }
+    return graphics.Color(r: _hex(s[1]) * 16 + _hex(s[2]), g: _hex(s[3]) * 16 + _hex(s[4]), b: _hex(s[5]) * 16 + _hex(s[6]), a: a)
+}
+
+global var _HEX = "0123456789abcdef"
+
+fn _hex2(n: int) -> text {
+    return "{_HEX[n // 16 + 1]}{_HEX[n % 16 + 1]}"
+}
+
+# color → "#rrggbb" (or "#rrggbbaa" when see-through)
+fn hex_of(c: graphics.Color) -> text {
+    if c.a is 255 {
+        return "#{_hex2(c.r)}{_hex2(c.g)}{_hex2(c.b)}"
+    }
+    return "#{_hex2(c.r)}{_hex2(c.g)}{_hex2(c.b)}{_hex2(c.a)}"
+}
+
+# A behavior with good starting values
+fn behavior(kind: text) -> Behavior {
+    if kind is "platformer" {
+        return Behavior(kind: kind, speed: 260.0, power: 640.0)
+    }
+    if kind is "topdown" {
+        return Behavior(kind: kind, speed: 220.0)
+    }
+    if kind is "patrol" {
+        return Behavior(kind: kind, speed: 80.0)
+    }
+    if kind is "collect" {
+        return Behavior(kind: kind, power: 10.0)
+    }
+    if kind is "enemy" {
+        return Behavior(kind: kind, power: 50.0)
+    }
+    if kind is "goal" {
+        return Behavior(kind: kind, value: "Tebrikler!")
+    }
+    if kind is "float" {
+        return Behavior(kind: kind, speed: 3.0, power: 6.0)
+    }
+    return Behavior(kind: kind)
+}
+
+global var BEHAVIOR_KINDS = ["platformer", "topdown", "gravity", "patrol", "enemy", "danger", "collect", "goal", "float", "camera"]
+
+# ---------- saving and loading (JSON) ----------
+fn _n(x: float) -> json.Json {
+    return json.number(x)
+}
+
+fn _thing_json(t: Thing) -> json.Json {
+    var bs: [json.Json] = []
+    repeat i from 1 to t.behaviors.length {
+        var b = t.behaviors[i]
+        bs.add(json.object({"kind": json.string(b.kind), "speed": _n(b.speed), "power": _n(b.power), "value": json.string(b.value), "sound": json.string(b.sound)}))
+    }
+    return json.object({"name": json.string(t.name), "kind": json.string(t.kind), "x": _n(t.x), "y": _n(t.y), "width": _n(t.width), "height": _n(t.height), "color": json.string(t.color), "image": json.string(t.image), "frames": _n(float(t.frames)), "frame_speed": _n(t.frame_speed), "tiled": json.boolean(t.tiled), "label": json.string(t.label), "text_size": _n(t.text_size), "on_screen": json.boolean(t.on_screen), "layer": _n(float(t.layer)), "solid": json.boolean(t.solid), "hidden": json.boolean(t.hidden), "behaviors": json.array(bs)})
+}
+
+fn to_json(g: Game) -> text {
+    var ts: [json.Json] = []
+    repeat i from 1 to g.things.length {
+        ts.add(_thing_json(g.things[i]))
+    }
+    var ls: [json.Json] = []
+    repeat i from 1 to g.layers.length {
+        var k = g.layers[i]
+        ls.add(json.object({"image": json.string(k.image), "speed": _n(k.speed), "y": _n(k.y)}))
+    }
+    return json.pretty(json.object({"title": json.string(g.title), "view_width": _n(g.view_width), "view_height": _n(g.view_height), "world_width": _n(g.world_width), "world_height": _n(g.world_height), "sky_top": json.string(g.sky_top), "sky_bottom": json.string(g.sky_bottom), "gravity": _n(g.gravity), "pixel_scale": _n(g.pixel_scale), "layers": json.array(ls), "things": json.array(ts)}))
+}
+
+fn _thing_from(v: json.Json) -> Thing {
+    var bs: [Behavior] = []
+    var liste = json.as_list(json.get(v, "behaviors"))
+    repeat i from 1 to liste.length {
+        var b = liste[i]
+        bs.add(Behavior(kind: json.as_text(json.get(b, "kind"), ""), speed: json.as_number(json.get(b, "speed"), 0.0), power: json.as_number(json.get(b, "power"), 0.0), value: json.as_text(json.get(b, "value"), ""), sound: json.as_text(json.get(b, "sound"), "")))
+    }
+    return Thing(name: json.as_text(json.get(v, "name"), "Nesne"), kind: json.as_text(json.get(v, "kind"), "box"), x: json.as_number(json.get(v, "x"), 0.0), y: json.as_number(json.get(v, "y"), 0.0), width: json.as_number(json.get(v, "width"), 48.0), height: json.as_number(json.get(v, "height"), 48.0), color: json.as_text(json.get(v, "color"), "#ffffff"), image: json.as_text(json.get(v, "image"), ""), frames: json.as_int(json.get(v, "frames"), 1), frame_speed: json.as_number(json.get(v, "frame_speed"), 8.0), tiled: json.as_bool(json.get(v, "tiled"), false), label: json.as_text(json.get(v, "label"), ""), text_size: json.as_number(json.get(v, "text_size"), 28.0), on_screen: json.as_bool(json.get(v, "on_screen"), false), layer: json.as_int(json.get(v, "layer"), 0), solid: json.as_bool(json.get(v, "solid"), false), hidden: json.as_bool(json.get(v, "hidden"), false), behaviors: bs)
+}
+
+fn from_json(content: text) -> Game? {
+    var belge = json.parse(content)
+    if belge is none {
+        return none
+    }
+    var d = belge
+    var ts: [Thing] = []
+    var liste = json.as_list(json.get(d, "things"))
+    repeat i from 1 to liste.length {
+        ts.add(_thing_from(liste[i]))
+    }
+    var ls: [Layer] = []
+    var kat = json.as_list(json.get(d, "layers"))
+    repeat i from 1 to kat.length {
+        ls.add(Layer(image: json.as_text(json.get(kat[i], "image"), ""), speed: json.as_number(json.get(kat[i], "speed"), 0.5), y: json.as_number(json.get(kat[i], "y"), 0.0)))
+    }
+    return Game(title: json.as_text(json.get(d, "title"), "Vash game"), view_width: json.as_number(json.get(d, "view_width"), 960.0), view_height: json.as_number(json.get(d, "view_height"), 540.0), world_width: json.as_number(json.get(d, "world_width"), 1920.0), world_height: json.as_number(json.get(d, "world_height"), 540.0), sky_top: json.as_text(json.get(d, "sky_top"), "#5fcde4"), sky_bottom: json.as_text(json.get(d, "sky_bottom"), "#d4f1ff"), gravity: json.as_number(json.get(d, "gravity"), 1600.0), pixel_scale: json.as_number(json.get(d, "pixel_scale"), 3.0), layers: ls, things: ts)
+}
+
+fn load(file: text) -> Game? {
+    use files
+    var icerik = read_file(file)
+    if icerik is none {
+        return none
+    }
+    var g = from_json(icerik)
+    if g is none {
+        return none
+    }
+    var oyun = g
+    oyun.folder = folder_of(file)
+    return oyun
+}
+
+fn save(g: Game, file: text) -> bool {
+    use files
+    return write_file(file, "{to_json(g)}\n")
+}
+
+# Open a window the size of the game (resizable) with sound
+fn open(g: Game, title: text) {
+    use sound
+    use screen
+    graphics.open_resizable_window(int(g.view_width), int(g.view_height), title)
+    graphics.set_min_size(320, 180)
+    graphics.open_audio()
+}
+
+# Play a scene file in its own window until it is closed
+fn run(file: text) {
+    use sound
+    use screen
+    use files
+    var bulunan = load(file)
+    if bulunan is none {
+        print("Oyun dosyası okunamadı: {file}")
+        return
+    }
+    var g = bulunan
+    open(g, g.title)
+    g.prepare(g.folder)
+    repeat while graphics.is_open() {
+        g.update(graphics.frame_time())
+        g.show()
+    }
+    graphics.close_window()
+}

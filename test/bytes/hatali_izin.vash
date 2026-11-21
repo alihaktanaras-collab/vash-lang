@@ -1,0 +1,3 @@
+fn oku() -> bytes? {
+    return read_bytes("x.bin")
+}

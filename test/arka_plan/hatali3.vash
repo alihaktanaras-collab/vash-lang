@@ -1,0 +1,6 @@
+fn f() -> int {
+    return 1
+}
+var x = start f()
+print(x.wait())
+print(x.wait())

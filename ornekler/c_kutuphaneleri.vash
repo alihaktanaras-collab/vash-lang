@@ -1,0 +1,79 @@
+# C kütüphanelerini kullanmak: extern
+# Yıllar önce C ile yazılmış hazır fonksiyonları Vash'a tanıtıp normal fonksiyon gibi çağırıyoruz.
+#
+# Tipler:  int, float, bool, text   → bildiğin Vash tipleri
+#          i32                      → C'nin küçük tam sayısı (Vash'ta normal int gibi görünür)
+#          ptr                      → C'nin verdiği bir "tutamaç" (ör: açık bir dosya); içine bakılmaz
+#
+# İzinler: dış dünyaya dokunan fonksiyonlar bunu söylemek zorunda.
+#   extern "..." needs files { ... }   → bu C fonksiyonları dosyalara dokunuyor
+#   fn kaydet(...) { use files ... }   → bu Vash fonksiyonu da dosyalara dokunuyor (söylemezse HATA)
+#   İzinler: files, net, system, screen, sound, time.   Ana program her şeye izinlidir.
+
+# --- 1) Matematik: saf hesap, izin gerekmez ---
+extern "msvcrt" {
+    fn sqrt(x: float) -> float
+    fn pow(taban: float, us: float) -> float
+    fn sin(aci: float) -> float
+}
+
+print("√2 =", sqrt(2.0))
+print("2^10 =", pow(2.0, 10.0))
+var pi = 3.141592653589793
+print("sin(90°) =", sin(pi / 2))
+
+fn hipotenus(a: float, b: float) -> float {
+    return sqrt(a * a + b * b)                  # izin gerekmez
+}
+print("3-4-? üçgeni:", hipotenus(3.0, 4.0))
+
+# --- 2) Dosyalar: 'files' izni ---
+extern "msvcrt" needs files {
+    fn fopen(ad: text, kip: text) -> ptr
+    fn fputs(yazi: text, dosya: ptr) -> i32
+    fn fclose(dosya: ptr) -> i32
+}
+
+# Bu fonksiyon dosyaya yazıyor: başında 'use files' yazmak zorunda
+fn notlari_kaydet(dosya_adi: text, notlar: {text: int}) -> bool {
+    use files
+    var dosya = fopen(dosya_adi, "w")
+    if dosya is none {
+        return false
+    }
+    var adlar = notlar.keys()
+    repeat i from 1 to adlar.length {
+        fputs("{adlar[i]}: {notlar[adlar[i]]}\n", dosya)
+    }
+    fclose(dosya)
+    return true
+}
+
+# Bu fonksiyon dosyaya yazan bir fonksiyonu çağırıyor: o da 'use files' yazmak zorunda
+fn donem_sonu(notlar: {text: int}) {
+    use files
+    if notlari_kaydet("vash_notlar.txt", notlar) {
+        print("vash_notlar.txt dosyasına {notlar.length} öğrencinin notu yazıldı.")
+    } else {
+        print("Dosya açılamadı!")
+    }
+}
+
+donem_sonu({"Ali": 90, "Ayşe": 85, "Can": 72})
+
+# --- 3) Windows'tan bilgi almak: 'time' ve 'system' izinleri ---
+extern "kernel32" needs time {
+    fn GetTickCount64() -> int                  # bilgisayar açılalı kaç milisaniye oldu
+}
+extern "msvcrt" needs system {
+    fn getenv(ad: text) -> text                 # ortam değişkeni oku
+}
+var dakika = GetTickCount64() // 60000
+print("Bilgisayar yaklaşık {dakika} dakikadır açık.")
+print("İşletim sistemi:", getenv("OS"))
+
+# --- 4) Pencere: Windows'un kendi mesaj kutusu (denemek için # işaretlerini sil) ---
+# extern "user32" needs screen {
+#     fn MessageBoxA(sahip: ptr, mesaj: text, baslik: text, tur: i32) -> i32
+# }
+# MessageBoxA(none, "Merhaba! Bu kutuyu Vash acti.", "Vash", 0)

@@ -1,0 +1,55 @@
+# [bool] listeleri: her eleman 1 bayt
+var l: [bool] = [true, false, true]
+l.add(false)
+l[2] = true
+print(l, l.length, l[1], l[4])
+l.remove(1)
+print(l)
+var k = l
+k[1] = false
+print(l, k)                                    # kopyala-yaz
+l.sort()
+print(l)
+fn ters(a: bool, b: bool) -> bool {
+    return a and not b
+}
+l.sort(by: ters)
+print(l, l.join("-"), random([true]))
+
+var izgara: [[bool]] = [[false, false], [false, false]]
+izgara[2][1] = true
+print(izgara)
+
+type Hucre {
+    acik: [bool] = []
+}
+var h = Hucre()
+h.acik.add(true)
+print(h)
+
+var d = {"a": true, "b": false}
+print(d.values())
+
+var bayrak: [bool] = []
+repeat i from 1 to 100 {
+    bayrak.add(i % 3 is 0)
+}
+var sayi = 0
+parallel repeat i from 1 to 100 {
+    bayrak[i] = not bayrak[i]
+}
+repeat i from 1 to 100 {
+    if bayrak[i] {
+        sayi = sayi + 1
+    }
+}
+print(sayi)
+
+var son: [bool] = []
+arena {
+    var gecici: [bool] = [true, true, false]
+    son = gecici
+}
+print(son)
+var bos: [bool] = []
+print(bos, bos.length)

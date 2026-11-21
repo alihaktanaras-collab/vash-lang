@@ -1,0 +1,18 @@
+﻿# Eratosthenes eleği: 50 milyona kadar asal sayıları say
+var n = 50000000
+var bilesik: [bool] = []
+repeat n + 1 {
+    bilesik.add(false)
+}
+var sayi = 0
+repeat i from 2 to n {
+    if not bilesik[i] {
+        sayi = sayi + 1
+        var j = i * i
+        repeat while j <= n {
+            bilesik[j] = true
+            j = j + i
+        }
+    }
+}
+print(sayi)

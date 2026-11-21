@@ -1,0 +1,132 @@
+# =====================================================================
+#  "Bunu mu demek istedin?" — yazım hatasında en yakın adı bulmak
+# =====================================================================
+#  Python'daki difflib.get_close_matches(ad, adaylar, n=1, cutoff=0.6) ile birebir aynı sonucu verir.
+#
+#  Benzerlik nasıl ölçülür? İki kelimenin en uzun ortak parçası bulunur, sonra o parçanın
+#  solunda ve sağında kalanlarda yine en uzun ortak parça aranır... Bulunan harflerin
+#  toplamı M ise:   benzerlik = 2 * M / (iki kelimenin uzunlukları toplamı)
+#      "topalm" ile "toplam":  "top" + "a" ya da "l" + "m" ... → 0.83   (0.6'dan büyük: öneri olur)
+# =====================================================================
+
+import dil
+
+fn _harfler(s: text) -> [text] {
+    var l: [text] = []
+    repeat i from 1 to s.length {
+        l.add(s[i])
+    }
+    return l
+}
+
+type Parca {
+    i: int
+    j: int
+    k: int
+}
+
+# a[alo..ahi) ile b[blo..bhi) arasındaki en uzun ortak parça (0'dan sayan, Python'daki gibi)
+fn _en_uzun(a: [text], b: [text], alo: int, ahi: int, blo: int, bhi: int) -> Parca {
+    var en_i = alo
+    var en_j = blo
+    var en_k = 0
+    var onceki: {int: int} = {}
+    repeat i from alo to ahi - 1 {
+        var yeni: {int: int} = {}
+        repeat j from blo to bhi - 1 {
+            if a[i + 1] is b[j + 1] {
+                var k = onceki.get(j - 1, else: 0) + 1
+                yeni[j] = k
+                if k > en_k {
+                    en_i = i - k + 1
+                    en_j = j - k + 1
+                    en_k = k
+                }
+            }
+        }
+        onceki = yeni
+    }
+    return Parca(i: en_i, j: en_j, k: en_k)
+}
+
+# İki kelimede ortak olan harflerin toplam sayısı
+fn _ortak(a: [text], b: [text]) -> int {
+    var toplam = 0
+    var kuyruk = [Parca(i: 0, j: a.length, k: 0)]        # (alo, ahi) ve (blo, bhi) için iki kayıt
+    var kuyruk_b = [Parca(i: 0, j: b.length, k: 0)]
+    repeat while kuyruk.length > 0 {
+        var ra = kuyruk[kuyruk.length]
+        var rb = kuyruk_b[kuyruk_b.length]
+        kuyruk.remove(kuyruk.length)
+        kuyruk_b.remove(kuyruk_b.length)
+        var alo = ra.i
+        var ahi = ra.j
+        var blo = rb.i
+        var bhi = rb.j
+        var p = _en_uzun(a, b, alo, ahi, blo, bhi)
+        if p.k > 0 {
+            toplam = toplam + p.k
+            if alo < p.i and blo < p.j {
+                kuyruk.add(Parca(i: alo, j: p.i, k: 0))
+                kuyruk_b.add(Parca(i: blo, j: p.j, k: 0))
+            }
+            if p.i + p.k < ahi and p.j + p.k < bhi {
+                kuyruk.add(Parca(i: p.i + p.k, j: ahi, k: 0))
+                kuyruk_b.add(Parca(i: p.j + p.k, j: bhi, k: 0))
+            }
+        }
+    }
+    return toplam
+}
+
+fn benzerlik(aday: text, kelime: text) -> float {
+    var a = _harfler(aday)
+    var b = _harfler(kelime)
+    var uzunluk = a.length + b.length
+    if uzunluk is 0 {
+        return 1.0
+    }
+    return 2.0 * _ortak(a, b) / uzunluk
+}
+
+# Python'daki gibi harf numaralarıyla karşılaştır: a, b'den "büyük" mü?
+fn _buyuk_mu(a: text, b: text) -> bool {
+    var n = a.length
+    if b.length < n {
+        n = b.length
+    }
+    repeat i from 1 to n {
+        var ca = code(a[i])
+        var cb = code(b[i])
+        if ca is not cb {
+            return ca > cb
+        }
+    }
+    return a.length > b.length
+}
+
+# En benzer aday (benzerliği 0.6 ve üstüyse); yoksa ""
+fn en_yakin(kelime: text, adaylar: [text]) -> text {
+    var en_iyi = ""
+    var en_puan = -1.0
+    repeat i from 1 to adaylar.length {
+        var x = adaylar[i]
+        var p = benzerlik(x, kelime)
+        if p >= 0.6 {
+            if p > en_puan or (p is en_puan and _buyuk_mu(x, en_iyi)) {
+                en_iyi = x
+                en_puan = p
+            }
+        }
+    }
+    return en_iyi
+}
+
+# Hata mesajının sonuna eklenen kısım: "\n   Bunu mu demek istedin: 'toplam'?"
+fn oneri(kelime: text, adaylar: [text]) -> text {
+    var y = en_yakin(kelime, adaylar)
+    if y.length is 0 {
+        return ""
+    }
+    return dil.sec("\n   Bunu mu demek istedin: '{y}'?", "\n   Did you mean: '{y}'?")
+}

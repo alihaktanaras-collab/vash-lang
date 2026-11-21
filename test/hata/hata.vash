@@ -1,0 +1,97 @@
+# Hata yakalama: fails · fail · try · do/catch · else:
+fn bol(a: int, b: int) -> int fails {
+    if b is 0 {
+        fail "sıfıra bölünemez"
+    }
+    return a // b
+}
+
+fn ortalama(sayilar: [int]) -> int fails {
+    var toplam = 0
+    repeat i from 1 to sayilar.length {
+        toplam = toplam + sayilar[i]
+    }
+    return try bol(toplam, sayilar.length)       # hata olursa yukarı iletilir
+}
+
+fn ad_oku(metin: text) -> text fails {
+    if metin.length is 0 {
+        fail "ad boş olamaz"
+    }
+    return metin.upper()
+}
+
+fn kaydet(icerik: text) fails {
+    if icerik.contains("yasak") {
+        fail "içerikte yasak kelime var: {icerik}"
+    }
+}
+
+print(bol(10, 2) else: -1, bol(10, 0) else: -1)
+print(ortalama([4, 6, 8]) else: -1, ortalama([]) else: -1)
+print(ad_oku("ali") else: "?", ad_oku("") else: "?")
+
+do {
+    print("başladı")
+    var x = try ortalama([1, 2, 3])
+    print("ortalama:", x)
+    var y = try bol(x, 0)
+    print("buraya gelmemeli", y)
+} catch hata {
+    print("yakalandı:", hata)
+}
+
+do {
+    try kaydet("güzel bir yazı")
+    print("kaydedildi")
+    try kaydet("yasak şey")
+    print("buraya gelmemeli")
+} catch neden {
+    print("kaydedilemedi:", neden)
+}
+
+fn dene_hepsi(liste: [int]) -> [text] {
+    var sonuc: [text] = []
+    repeat i from 1 to liste.length {
+        do {
+            sonuc.add("{try bol(100, liste[i])}")
+        } catch h {
+            sonuc.add("({h})")
+        }
+    }
+    return sonuc
+}
+print(dene_hepsi([5, 0, 20, 0]))
+
+type Hesap {
+    bakiye: int
+    fn change cek(miktar: int) fails {
+        if miktar > bakiye {
+            fail "yetersiz bakiye ({bakiye} < {miktar})"
+        }
+        bakiye = bakiye - miktar
+    }
+}
+var h = Hesap(bakiye: 100)
+do {
+    try h.cek(30)
+    try h.cek(500)
+} catch e {
+    print(e)
+}
+print(h.bakiye)
+
+# iç içe do: içteki yakalar, dıştakine gitmez
+do {
+    do {
+        try kaydet("yasak 1")
+    } catch ic {
+        print("iç:", ic)
+        try kaydet("yasak 2")
+    }
+} catch dis {
+    print("dış:", dis)
+}
+
+print(try bol(1, 0))
+print("bu yazılmamalı")

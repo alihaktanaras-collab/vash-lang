@@ -1,0 +1,14 @@
+# Saf hesap: hiçbir izin istemez
+var asal: [int] = []
+repeat n from 2 to 50 {
+    var bolen = false
+    repeat d from 2 to n - 1 {
+        if n % d is 0 {
+            bolen = true
+        }
+    }
+    if not bolen {
+        asal.add(n)
+    }
+}
+print("asallar:", asal)

@@ -1,0 +1,27 @@
+# Vash ile yazılmış kelimelere ayırıcıyı dener:
+# bir dosya adı okur (girdiden), dosyayı token'lara ayırır, her token'ı bir satıra yazar.
+#     TÜR <tab> DEĞER <tab> SATIR <tab> SÜTUN
+
+import lexer
+
+var yol = input().trim()
+var kod = read_file(yol)
+if kod is none {
+    print("HATA: '{yol}' okunamadı.")
+} else {
+    var sonuc = lexer.kelimelere_ayir(kod)
+    match sonuc {
+        Tamam(tokenlar) {
+            var satirlar: [text] = []
+            repeat i from 1 to tokenlar.length {
+                var t = tokenlar[i]
+                var deger = t.deger.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+                satirlar.add("{t.tur}\t{deger}\t{t.satir}\t{t.sutun}")
+            }
+            print(satirlar.join("\n"))
+        }
+        Hata(mesaj) {
+            print("HATA: {mesaj}")
+        }
+    }
+}

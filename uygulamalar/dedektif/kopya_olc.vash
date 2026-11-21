@@ -1,0 +1,27 @@
+# Kopya bulmayı dene:  vash run kopya_olc.vash [klasör]
+import fs
+import tarama
+
+var girdi = args()
+var kok = "C:\\Users"
+if girdi.length > 0 {
+    kok = girdi[1]
+}
+var ilerleme = channel[int]()
+var t = tarama.tara(kok, ilerleme, fs.cores())
+print("tarandı: {t.dosya_sayisi} dosya, aday: {tarama.kopya_aday_sayisi(t.esler)}")
+var bas = time()
+var gruplar = tarama.kopyalari_bul(t.esler, ilerleme, fs.cores())
+var bos = 0
+repeat i from 1 to gruplar.length {
+    bos = bos + gruplar[i][1].boyut * (gruplar[i].length - 1)
+}
+print("kopya grubu: {gruplar.length}, boşa giden: {fs.size_text(bos)}, süre: {float(int((time() - bas) * 10.0)) / 10.0} sn")
+repeat i from 1 to gruplar.length {
+    if i <= 4 {
+        print("  {gruplar[i].length} x {fs.size_text(gruplar[i][1].boyut)}:")
+        repeat j from 1 to gruplar[i].length {
+            print("     {gruplar[i][j].yol}")
+        }
+    }
+}

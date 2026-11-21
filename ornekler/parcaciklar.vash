@@ -1,0 +1,66 @@
+# Parçacık yağmuru: Vash'ın üç yeni özelliği bir arada
+#   parallel repeat → 20.000 parçacığın hareketi bütün çekirdeklere bölünür
+#   arena { }       → her karede çizim için oluşan binlerce geçici değer kare sonunda tek hamlede silinir
+#   graphics        → Raylib ile pencere ve çizim
+# Yeşil topu ok tuşlarıyla hareket ettir. Kapatmak için Esc ya da pencerenin çarpısı.
+# Çalıştırmak için:  vash run ornekler/parcaciklar.vash
+
+import graphics
+
+var genislik = 960
+var yukseklik = 600
+var n = 20000
+
+var xs: [float] = []
+var ys: [float] = []
+var vxs: [float] = []
+var vys: [float] = []
+var renk_no: [int] = []
+repeat i from 1 to n {
+    xs.add(random(0.0 to 960.0))
+    ys.add(random(0.0 to 600.0))
+    vxs.add(random(-150.0 to 150.0))
+    vys.add(random(-150.0 to 150.0))
+    renk_no.add(random(1 to 5))
+}
+var renkler = [graphics.YELLOW, graphics.ORANGE, graphics.RED, graphics.PURPLE, graphics.BLUE]
+var oyuncu_x = 480.0
+var oyuncu_y = 300.0
+var sinir_x = genislik * 1.0
+var sinir_y = yukseklik * 1.0
+
+graphics.open_window(genislik, yukseklik, "Vash: 20.000 parcacik")
+repeat while graphics.is_open() {
+    var dt = graphics.frame_time()
+    if graphics.key_down(graphics.KEY_RIGHT) { oyuncu_x = oyuncu_x + 320.0 * dt }
+    if graphics.key_down(graphics.KEY_LEFT) { oyuncu_x = oyuncu_x - 320.0 * dt }
+    if graphics.key_down(graphics.KEY_DOWN) { oyuncu_y = oyuncu_y + 320.0 * dt }
+    if graphics.key_down(graphics.KEY_UP) { oyuncu_y = oyuncu_y - 320.0 * dt }
+
+    # Hareket: her tur sadece kendi parçacığını değiştirir, bütün çekirdekler aynı anda çalışır
+    parallel repeat i from 1 to n {
+        var x = xs[i] + vxs[i] * dt
+        var y = ys[i] + vys[i] * dt
+        if x < 0.0 or x > sinir_x {
+            vxs[i] = 0.0 - vxs[i]
+        }
+        if y < 0.0 or y > sinir_y {
+            vys[i] = 0.0 - vys[i]
+        }
+        xs[i] = x
+        ys[i] = y
+    }
+
+    graphics.begin_drawing(graphics.DARK_BLUE)
+    arena {                                    # çizim için oluşan geçici değerler kare sonunda toplu silinir
+        repeat i from 1 to n {
+            # küçük kare: 2 üçgen (daire 36 üçgen olurdu; 20.000 parçacıkta fark büyük)
+            graphics.draw_rectangle(xs[i], ys[i], 3.0, 3.0, renkler[renk_no[i]])
+        }
+    }
+    graphics.draw_circle(oyuncu_x, oyuncu_y, 18.0, graphics.GREEN)
+    graphics.draw_rectangle(8.0, 8.0, 560.0, 36.0, graphics.BLACK)
+    graphics.draw_text("FPS: {graphics.fps()}   parcacik: {n}   ok tuslariyla oyna", 16, 16, 20, graphics.WHITE)
+    graphics.end_drawing()
+}
+graphics.close_window()

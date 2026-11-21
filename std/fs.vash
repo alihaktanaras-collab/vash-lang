@@ -1,0 +1,209 @@
+# fs: klasörler ve dosya sistemi
+#
+#   import fs
+#   var l = fs.list("C:/Users")                 # [fs.Entry]: name, is_dir, is_link, size (bayt), modified (unix sn)
+#   repeat i from 1 to l.length { print(l[i].name, l[i].size) }
+#   print(fs.hash("a.zip"), fs.read_head("a.png", 24))                      # içerikten 16 harflik parmak izi (aynı içerik → aynı iz)
+#   fs.trash("eski_klasor")                      # Geri Dönüşüm Kutusu'na taşı (geri alınabilir)
+#   print(fs.drives(), fs.disk_size("C:\\"), fs.disk_free("C:\\"), fs.cores())
+#   print(fs.join("C:/a", "b.txt"), fs.name("C:/a/b.txt"), fs.parent("C:/a/b.txt"), fs.extension("b.TXT"))
+# Hepsi 'use files' ister. Kum havuzunda klasör sınırına uyar.
+
+extern "c" needs files {
+    fn _vash_klasor_oku(yol: text) -> text
+    fn _vash_dosya_ozeti(yol: text) -> text
+    fn _vash_dosya_ozeti_hizli(yol: text) -> text
+    fn _vash_cope_tasi(yol: text) -> i32
+    fn _vash_disk_bilgi(kok: text) -> text
+    fn _vash_suruculer() -> text
+    fn _vash_gezginde_ac(yol: text)
+    fn _vash_cekirdek() -> int
+    fn _vash_dosya_basi(yol: text, tampon: bytes, n: int) -> int
+}
+
+type Entry {
+    name: text
+    is_dir: bool = false
+    is_link: bool = false              # bağlantı (junction/symlink): taramada içine girilmez
+    size: int = 0
+    modified: int = 0
+}
+
+# Bir klasörün içindekiler (alt klasörlere inmez); okunamazsa boş liste
+fn list(path: text) -> [Entry] {
+    use files
+    var sonuc: [Entry] = []
+    var satirlar = _vash_klasor_oku(path).split("\n")
+    repeat i from 1 to satirlar.length {
+        var s = satirlar[i]
+        if s.length > 0 {
+            var p = s.split("\t")
+            if p.length >= 4 {
+                var ad = p[4]
+                if p.length > 4 {
+                    var parcalar: [text] = []
+                    repeat k from 4 to p.length {
+                        parcalar.add(p[k])
+                    }
+                    ad = parcalar.join("\t")
+                }
+                sonuc.add(Entry(name: ad, is_dir: p[1] is "D", is_link: p[1] is "L", size: int(p[2], else: 0), modified: int(p[3], else: 0)))
+            }
+        }
+    }
+    return sonuc
+}
+
+# Dosyanın sadece ilk n baytı (resim başlığı gibi şeyler için; bütün dosyayı okumaz)
+fn read_head(path: text, n: int) -> bytes {
+    use files
+    var b = bytes(n)
+    var okunan = _vash_dosya_basi(path, b, n)
+    if okunan <= 0 {
+        return bytes(0)
+    }
+    if okunan < n {
+        return b[1 to okunan]
+    }
+    return b
+}
+
+fn hash(path: text) -> text {
+    use files
+    return _vash_dosya_ozeti(path)
+}
+
+# Hızlı ön iz: sadece ilk ve son 64 KB (aynı iz = belki aynı; hash ile kesinleştir)
+fn quick_hash(path: text) -> text {
+    use files
+    return _vash_dosya_ozeti_hizli(path)
+}
+
+# Geri Dönüşüm Kutusu'na taşı (bir sürücünün kökü asla); oldu mu?
+fn trash(path: text) -> bool {
+    use files
+    return _vash_cope_tasi(path) is not 0
+}
+
+fn drives() -> [text] {
+    use files
+    var sonuc: [text] = []
+    var l = _vash_suruculer().split("\n")
+    repeat i from 1 to l.length {
+        if l[i].length > 0 {
+            sonuc.add(l[i])
+        }
+    }
+    return sonuc
+}
+
+fn disk_size(root: text) -> int {
+    use files
+    var p = _vash_disk_bilgi(root).split("\t")
+    if p.length < 2 {
+        return 0
+    }
+    return int(p[1], else: 0)
+}
+
+fn disk_free(root: text) -> int {
+    use files
+    var p = _vash_disk_bilgi(root).split("\t")
+    if p.length < 2 {
+        return 0
+    }
+    return int(p[2], else: 0)
+}
+
+# Dosya Gezgini'nde göster
+fn reveal(path: text) {
+    use files
+    _vash_gezginde_ac(path)
+}
+
+fn cores() -> int {
+    use files
+    return _vash_cekirdek()
+}
+
+fn join(a: text, b: text) -> text {
+    if a.length is 0 {
+        return b
+    }
+    if a.ends_with("\\") or a.ends_with("/") {
+        return "{a}{b}"
+    }
+    return "{a}\\{b}"
+}
+
+# Yolun son parçası: "C:/a/b.txt" → "b.txt"
+fn name(path: text) -> text {
+    var son = 0
+    repeat i from 1 to path.length {
+        if path[i] is "/" or path[i] is "\\" {
+            if i < path.length {
+                son = i
+            }
+        }
+    }
+    var p = path[son + 1 to path.length]
+    if p.ends_with("\\") or p.ends_with("/") {
+        if p.length <= 1 {
+            return p
+        }
+        return p[1 to p.length - 1]
+    }
+    return p
+}
+
+# Üst klasör: "C:/a/b.txt" → "C:/a"
+fn parent(path: text) -> text {
+    var son = 0
+    repeat i from 1 to path.length - 1 {
+        if path[i] is "/" or path[i] is "\\" {
+            son = i
+        }
+    }
+    if son <= 0 {
+        return ""
+    }
+    if son is 3 and path[2] is ":" {
+        return path[1 to 3]
+    }
+    return path[1 to son - 1]
+}
+
+# Uzantı, küçük harfle ve noktasız: "Resim.PNG" → "png"
+fn extension(path: text) -> text {
+    var ad = name(path)
+    var nokta = 0
+    repeat i from 1 to ad.length {
+        if ad[i] is "." {
+            nokta = i
+        }
+    }
+    if nokta <= 1 or nokta is ad.length {
+        return ""
+    }
+    return ad[nokta + 1 to ad.length].lower()
+}
+
+# Bayt → "1,4 GB"
+fn size_text(n: int) -> text {
+    var f = float(n)
+    var birimler = ["B", "KB", "MB", "GB", "TB"]
+    var i = 1
+    repeat while f >= 1024.0 and i < 5 {
+        f = f / 1024.0
+        i = i + 1
+    }
+    if i is 1 {
+        return "{n} B"
+    }
+    var yuvarlak = float(int(f * 10.0 + 0.5)) / 10.0
+    var t = text(yuvarlak).replace(".", ",")
+    if t.ends_with(",0") {
+        t = t[1 to t.length - 2]
+    }
+    return "{t} {birimler[i]}"
+}

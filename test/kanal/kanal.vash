@@ -1,0 +1,92 @@
+﻿# channel: işler arasında mesajlaşma
+fn uretici(kanal: channel[text], kac: int) -> int {
+    repeat i from 1 to kac {
+        kanal.send("mesaj {i}")
+    }
+    kanal.close()
+    return kac
+}
+
+fn kareci(girdi: channel[int], cikti: channel[int]) {
+    var devam = true
+    repeat while devam {
+        var x = girdi.receive(else: -1)
+        if x is -1 {
+            devam = false
+        } else {
+            cikti.send(x * x)
+        }
+    }
+    cikti.close()
+}
+
+var k = channel[text]()
+var uretim = start uretici(k, 5)
+var gelen = k.receive()
+repeat while gelen is not none {
+    print(gelen)
+    gelen = k.receive()
+}
+print("üretilen:", uretim.wait())
+
+# işçi hattı: ana program → kareci → ana program
+var girdi = channel[int]()
+var cikti = channel[int]()
+var isci = start kareci(girdi, cikti)
+repeat i from 1 to 10 {
+    girdi.send(i)
+}
+girdi.close()
+var toplam = 0
+var kare = cikti.receive(else: -1)
+repeat while kare is not -1 {
+    toplam = toplam + kare
+    kare = cikti.receive(else: -1)
+}
+isci.wait()
+print("kareler toplamı:", toplam)
+
+# 4 işçi aynı kanaldan iş alıyor, sonuçları tek kanala yazıyor
+fn calisan(isler: channel[int], sonuclar: channel[int]) -> int {
+    var yapilan = 0
+    var x = isler.receive(else: 0)
+    repeat while x > 0 {
+        var t = 0
+        repeat j from 1 to x {
+            t = t + j % 3
+        }
+        sonuclar.send(t)
+        yapilan = yapilan + 1
+        x = isler.receive(else: 0)
+    }
+    return yapilan
+}
+var isler = channel[int]()
+var sonuclar = channel[int]()
+var calisanlar: [task[int]] = []
+repeat i from 1 to 4 {
+    calisanlar.add(start calisan(isler, sonuclar))
+}
+repeat i from 1 to 200 {
+    isler.send(100000)
+}
+isler.close()
+var yapilan = 0
+repeat i from 1 to 4 {
+    yapilan = yapilan + calisanlar[i].wait()
+}
+sonuclar.close()
+var hepsi = 0
+var s = sonuclar.receive(else: -1)
+repeat while s is not -1 {
+    hepsi = hepsi + s
+    s = sonuclar.receive(else: -1)
+}
+print("yapılan iş:", yapilan, "toplam:", hepsi)
+
+# listeler ve beklemeden bakmak
+var lk = channel[[int]]()
+lk.send([1, 2, 3])
+var bos = lk.try_receive()
+var bos2 = lk.try_receive()
+print(bos, bos2)

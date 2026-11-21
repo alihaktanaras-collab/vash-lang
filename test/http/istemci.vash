@@ -1,0 +1,32 @@
+import http
+
+var adres = "http://127.0.0.1:8091"
+var c1 = http.post("{adres}/urunler", "\{\"ad\": \"armut\", \"fiyat\": 20\}", "application/json")
+if c1 is not none {
+    print(c1.status, c1.body, c1.headers.get("location", else: "-"))
+}
+var bas: {text: text} = {}
+var c2 = http.request("PUT", "{adres}/urunler/1", "\{\"fiyat\": 15\}", bas)
+if c2 is not none {
+    print(c2.status, c2.body)
+}
+var c3 = http.get("{adres}/urunler?ara=ar")
+if c3 is not none {
+    print(c3.status, c3.body, c3.headers["content-type"])
+}
+var c4 = http.get("{adres}/yok%20b%C3%B6yle")
+if c4 is not none {
+    print(c4.status, c4.body)
+}
+var c5 = http.get("{adres}/urunler")
+if c5 is not none {
+    print(c5.body)
+}
+var c6 = http.get("http://127.0.0.1:1/")
+if c6 is none {
+    print("bağlanamadı:", http.error())
+}
+var c7 = http.get("{adres}/kapat")
+if c7 is not none {
+    print(c7.body)
+}

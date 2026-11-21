@@ -1,0 +1,66 @@
+# Listeler
+
+# --- Temel işler ---
+var meyveler = ["elma", "armut", "kiraz"]
+print("İlk meyve:", meyveler[1])           # 1'den başlar
+print("Kaç meyve:", meyveler.length)
+
+meyveler[2] = "muz"                         # elemanı değiştir
+meyveler.add("çilek")                       # sona ekle
+meyveler.remove(1)                          # 1. elemanı sil
+print("Şimdi:", meyveler)
+
+repeat i from 1 to meyveler.length {
+    print("  {i}.", meyveler[i])
+}
+
+# --- Her liste ayrıdır (kopyala-yaz) ---
+var a = [1, 2, 3]
+var b = a                                   # kopyalanmaz, paylaşılır
+b.add(4)                                    # şimdi b kendi kopyasını alır
+print("a:", a, "  b:", b)                   # a değişmedi!
+
+# --- Fonksiyona verilen liste de ayrıdır ---
+fn ekle_ve_say(l: [int]) -> int {
+    l.add(100)                              # sadece fonksiyonun kendi kopyası değişir
+    return l.length
+}
+print("Fonksiyon içinde uzunluk:", ekle_ve_say(a), "  dışarıda:", a.length)
+
+# --- Fonksiyondan liste döndürmek ---
+fn kareler(n: int) -> [int] {
+    var sonuc: [int] = []
+    repeat i from 1 to n {
+        sonuc.add(i * i)
+    }
+    return sonuc
+}
+print("Kareler:", kareler(6))
+print("3. kare:", kareler(6)[3])
+
+# --- Ortalama hesabı ---
+var notlar = [90, 75, 100, 60, 85]
+var toplam = 0
+repeat i from 1 to notlar.length {
+    toplam = toplam + notlar[i]
+}
+print("Ortalama:", toplam / notlar.length)
+
+# --- İç içe liste (tablo) ---
+var tablo = [[1, 2, 3], [4, 5, 6]]
+print("Tablo:", tablo, "  2. satır 3. sütun:", tablo[2][3])
+
+# --- Ondalık ve bool listeler ---
+var olcumler = [1.5, 2, 3.25]               # int de konabilir, float'a çevrilir
+var cevaplar = [true, false]
+print(olcumler, cevaplar)
+
+# --- use change ile global liste ---
+var skorlar: [int] = []
+fn skor_ekle(s: int) {
+    use change skorlar
+    skorlar.add(s)
+}
+skor_ekle(50)
+skor_ekle(70)
+print("Skorlar:", skorlar)

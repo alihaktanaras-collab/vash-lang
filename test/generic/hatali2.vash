@@ -1,0 +1,6 @@
+fn en_buyuk[T](l: [T]) -> T {
+    var e = l[1]
+    if l[2] > e { e = l[2] }
+    return e
+}
+print(en_buyuk([[1], [2]]))

@@ -1,0 +1,55 @@
+# Generic fonksiyonlar: her tip için ayrı bir kopya
+fn ilk[T](l: [T]) -> T {
+    return l[1]
+}
+
+fn ters[T](l: [T]) -> [T] {
+    var sonuc: [T] = []
+    repeat i from l.length to 1 step -1 {
+        sonuc.add(l[i])
+    }
+    return sonuc
+}
+
+fn en_buyuk[T](l: [T]) -> T {
+    var e = l[1]
+    repeat i from 2 to l.length {
+        if l[i] > e {
+            e = l[i]
+        }
+    }
+    return e
+}
+
+fn ciftle[A, B](a: A, b: B) -> text {
+    return "({a}, {b})"
+}
+
+fn say[K](s: {K: int}, anahtar: K) -> int {
+    return s.get(anahtar, else: 0)
+}
+
+fn bul[T](l: [T], aranan: T) -> int fails {
+    repeat i from 1 to l.length {
+        if l[i] is aranan {
+            return i
+        }
+    }
+    fail "bulunamadı: {aranan}"
+}
+
+type Nokta {
+    x: int
+    y: int
+}
+
+print(ilk([10, 20]), ilk(["elma", "armut"]), ilk([2.5]))
+print(ters([1, 2, 3]), ters(["a", "b"]))
+print(en_buyuk([3, 9, 4]), en_buyuk([1.5, 0.5]))
+print(ciftle(1, "bir"), ciftle(true, 2.5))
+print(say({"a": 3}, "a"), say({7: 1}, 8))
+print(bul(["x", "y", "z"], "y") else: -1, bul([1, 2], 5) else: -1)
+var noktalar = [Nokta(x: 1, y: 2), Nokta(x: 3, y: 4)]
+print(ilk(noktalar).x, ters(noktalar)[1].y)
+var bos: [int] = []
+print(ters(bos).length)

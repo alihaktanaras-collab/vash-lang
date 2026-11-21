@@ -1,0 +1,24 @@
+# =====================================================================
+#  DİL: derleyicinin mesaj dili (Türkçe ya da İngilizce)
+# =====================================================================
+#  Her mesaj iki dilde yazılır:   dil.sec("Türkçe metin", "English text")
+#  Hangisinin gösterileceğini vash.vash başta ayarlar (VASH_DIL ortam değişkeni ya da Windows'un dili).
+#  Ayarlanmazsa Türkçe (karşılaştırma testleri eski Python derleyicisiyle Türkçe mesajları karşılaştırır).
+
+global var DIL = "tr"
+
+fn ayarla(d: text) {
+    use change DIL
+    DIL = d
+}
+
+fn sec(tr: text, en: text) -> text {
+    if DIL is "en" {
+        return en
+    }
+    return tr
+}
+
+fn ingilizce_mi() -> bool {
+    return DIL is "en"
+}

@@ -1,0 +1,33 @@
+# Oyun karesi gibi: her karede binlerce geçici metin/liste oluşur, kare sonunda hepsi atılır.
+# Hız ölçümü için: arena { } ile ve olmadan aynı iş.
+
+type Parca {
+    x: float
+    y: float
+    ad: text
+}
+
+fn kare_hesapla(no: int) -> int {
+    var parcalar: [Parca] = []
+    repeat i from 1 to 200 {
+        parcalar.add(Parca(x: i * 1.5, y: no * 0.5, ad: "parça {i}/{no}"))
+    }
+    var toplam = 0
+    repeat i from 1 to parcalar.length {
+        var etiket = "{parcalar[i].ad} @ {parcalar[i].x}"
+        var kelimeler = etiket.split(" ")
+        toplam = toplam + kelimeler.length + etiket.length
+    }
+    return toplam
+}
+
+var genel = 0
+var sure = measure {
+    repeat kare from 1 to 2000 {
+        arena {
+            genel = genel + kare_hesapla(kare)
+        }
+    }
+}
+print("toplam:", genel)
+print("süre:", sure)

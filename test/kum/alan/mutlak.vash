@@ -1,0 +1,2 @@
+print(read_file("C:/Windows/win.ini") else: "(yok)")
+print("BU SATIR YAZILMAMALI")

@@ -1,0 +1,25 @@
+# Bellek testi: döngüde 1 milyon kere yeni metin oluştur
+# Sayaç olmadan her metin hafızada kalır; sayaçla hemen geri verilir.
+
+fn etiket(n: int) -> text {
+    return "Sayı {n}"
+}
+
+var bulunan = 0
+repeat i from 1 to 1000000 {
+    var yazi = "Sayı {i}"
+    if yazi is "Sayı 500000" {
+        bulunan = bulunan + 1
+    }
+    var e = etiket(i)
+    if e is yazi {
+        bulunan = bulunan + 1
+    }
+}
+print("Bulunan:", bulunan)
+
+var son = "başlangıç"
+repeat i from 1 to 3 {
+    son = "tur {i}"
+}
+print("Son değer:", son)

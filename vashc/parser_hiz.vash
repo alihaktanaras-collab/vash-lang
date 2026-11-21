@@ -1,0 +1,19 @@
+# Kelimelere ayırma + ağaç kurmanın hızını ölçer.
+import lexer
+import parser
+
+var yol = input().trim()
+var kod = read_file(yol) else: ""
+var sonuc = ""
+var sure = measure {
+    match lexer.kelimelere_ayir(kod) {
+        Hata(mesaj) { sonuc = "HATA: {mesaj}" }
+        Tamam(tokenlar) {
+            match parser.agac_kur(tokenlar) {
+                Hata(mesaj) { sonuc = "HATA: {mesaj}" }
+                Tamam(agac) { sonuc = "{agac.cocuklar.length} komut" }
+            }
+        }
+    }
+}
+print("Vash:   {sonuc}, {int(sure * 1000)} ms")

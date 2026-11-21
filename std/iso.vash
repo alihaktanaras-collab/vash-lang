@@ -1,0 +1,87 @@
+# iso: izometrik (çapraz yukarıdan) ızgara hesapları
+#
+#   import iso
+#   var g = iso.Grid(origin_x: 228.0, origin_y: 6.0, tile_w: 32.0, tile_h: 16.0, size: 14)
+#   var p = g.tile_to_world(3, 5)          # karonun üst köşesi (dünya pikseli)
+#   var k = g.world_to_tile(410.0, 120.0)  # içindeki karo: k.x, k.y (ızgara dışındaysa -1)
+#   iso.draw_tile(sx, sy, w, h, renk)      # baklava: üst köşesi sx, sy
+import graphics
+import math
+
+type Tile {
+    x: int
+    y: int
+}
+
+type Grid {
+    origin_x: float                    # (0, 0) karosunun üst köşesi
+    origin_y: float
+    tile_w: float = 32.0
+    tile_h: float = 16.0
+    size: int = 10                     # size x size karo
+
+    # Karonun üst köşesi
+    fn tile_to_world(tx: int, ty: int) -> graphics.Vector2 {
+        return graphics.Vector2(x: origin_x + float(tx - ty) * tile_w / 2.0, y: origin_y + float(tx + ty) * tile_h / 2.0)
+    }
+
+    # Karonun ortası
+    fn tile_center(tx: int, ty: int) -> graphics.Vector2 {
+        return graphics.Vector2(x: origin_x + float(tx - ty) * tile_w / 2.0, y: origin_y + float(tx + ty + 1) * tile_h / 2.0)
+    }
+
+    # Bir dünya noktasının üstünde olduğu karo (ızgara dışıysa x = -1)
+    fn world_to_tile(wx: float, wy: float) -> Tile {
+        var a = (wx - origin_x) / (tile_w / 2.0)
+        var b = (wy - origin_y) / (tile_h / 2.0)
+        var tx = int(math.floor((b + a) / 2.0))
+        var ty = int(math.floor((b - a) / 2.0))
+        if tx < 0 or ty < 0 or tx >= size or ty >= size {
+            return Tile(x: -1, y: -1)
+        }
+        return Tile(x: tx, y: ty)
+    }
+
+    fn inside(tx: int, ty: int) -> bool {
+        return tx >= 0 and ty >= 0 and tx < size and ty < size
+    }
+}
+
+# Baklava (karo) çiz: (x, y) üst köşe, w genişlik, h yükseklik
+fn draw_tile(x: float, y: float, w: float, h: float, color: graphics.Color) {
+    use screen
+    graphics.draw_triangle(x, y, x + w / 2.0, y + h / 2.0, x - w / 2.0, y + h / 2.0, color)
+    graphics.draw_triangle(x - w / 2.0, y + h / 2.0, x + w / 2.0, y + h / 2.0, x, y + h, color)
+}
+
+# Birden çok karoluk alan (w x d karo) baklavası
+fn draw_area(x: float, y: float, w: int, d: int, tile_w: float, tile_h: float, color: graphics.Color) {
+    use screen
+    var hx = tile_w / 2.0
+    var hy = tile_h / 2.0
+    var sag_x = x + float(w) * hx
+    var sag_y = y + float(w) * hy
+    var alt_x = x + float(w - d) * hx
+    var alt_y = y + float(w + d) * hy
+    var sol_x = x - float(d) * hx
+    var sol_y = y + float(d) * hy
+    graphics.draw_triangle(x, y, sag_x, sag_y, alt_x, alt_y, color)
+    graphics.draw_triangle(x, y, alt_x, alt_y, sol_x, sol_y, color)
+}
+
+# Alanın dış çizgisi
+fn draw_area_outline(x: float, y: float, w: int, d: int, tile_w: float, tile_h: float, thickness: float, color: graphics.Color) {
+    use screen
+    var hx = tile_w / 2.0
+    var hy = tile_h / 2.0
+    var sag_x = x + float(w) * hx
+    var sag_y = y + float(w) * hy
+    var alt_x = x + float(w - d) * hx
+    var alt_y = y + float(w + d) * hy
+    var sol_x = x - float(d) * hx
+    var sol_y = y + float(d) * hy
+    graphics.draw_line(x, y, sag_x, sag_y, thickness, color)
+    graphics.draw_line(sag_x, sag_y, alt_x, alt_y, thickness, color)
+    graphics.draw_line(alt_x, alt_y, sol_x, sol_y, thickness, color)
+    graphics.draw_line(sol_x, sol_y, x, y, thickness, color)
+}

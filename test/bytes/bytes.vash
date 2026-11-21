@@ -1,0 +1,47 @@
+# bytes: ikili veriler
+var veri = bytes(4)
+veri[1] = 137
+veri[2] = 80
+veri.add(78)
+veri.add_int(1000, 2)
+veri.add_int(-1, 4)
+print(veri, veri.length)
+print(veri[1], veri[5], veri.get_int(6, 2), veri.get_int(8, 4))
+
+var kopya = veri
+kopya[1] = 0
+print(veri[1], kopya[1])                       # kopyala-yaz: veri değişmez
+
+var yazi = "Merhaba ç".to_bytes()
+print(yazi.length, yazi[1 to 3].to_text(), yazi.to_text())
+
+fn kaydet(ad: text, b: bytes) -> bool {
+    use files
+    return write_bytes(ad, b)
+}
+
+print(kaydet("bytes_deneme.bin", veri))
+var geri = read_bytes("bytes_deneme.bin") else: bytes(0)
+print(geri.length, geri[2], geri.get_int(6, 2))
+var yok = read_bytes("olmayan_dosya.bin")
+print(yok)
+
+var parcalar: [bytes] = [veri, yazi[1 to 2]]
+print(parcalar)
+
+type Resim {
+    ad: text
+    ham: bytes
+}
+var r = Resim(ad: "a.png", ham: veri[1 to 3])
+print(r.ham.length, r)
+
+var buyuk = bytes(0)
+repeat i from 1 to 100000 {
+    buyuk.add(i % 256)
+}
+var t = 0
+repeat i from 1 to buyuk.length {
+    t = t + buyuk[i]
+}
+print(t, buyuk)

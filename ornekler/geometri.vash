@@ -1,0 +1,39 @@
+# geometri.vash — başka dosyalar "import geometri" ile kullanır
+# İçe alınan dosyada sadece tanımlar olur: fn, type, enum, extern, global var.
+
+global var PI = 3.141592653589793
+
+type Nokta {
+    x: float
+    y: float
+}
+
+enum Sekil {
+    Daire(merkez: Nokta, yaricap: float)
+    Dikdortgen(kose: Nokta, en: float, boy: float)
+}
+
+fn alan(s: Sekil) -> float {
+    match s {
+        Daire(m, r) { return PI * _kare(r) }
+        Dikdortgen(k, en, boy) { return en * boy }
+    }
+}
+
+fn cevre(s: Sekil) -> float {
+    match s {
+        Daire(m, r) { return 2 * PI * r }
+        Dikdortgen(k, en, boy) { return 2 * (en + boy) }
+    }
+}
+
+fn uzaklik(a: Nokta, b: Nokta) -> float {
+    return istatistik.karekok(_kare(a.x - b.x) + _kare(a.y - b.y))   # başka bir modülü kullanıyor
+}
+
+# '_' ile başlayan: gizli, sadece bu dosyada kullanılabilir
+fn _kare(x: float) -> float {
+    return x * x
+}
+
+import istatistik

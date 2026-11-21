@@ -1,0 +1,1248 @@
+# =====================================================================
+#  VASH DERLEYİCİSİ — VASH İLE YAZILMIŞ HÂLİ
+#  2. İSTASYON: AĞAÇ KURUCU (parser)
+# =====================================================================
+#
+#  Kelimelere ayırıcının verdiği düz listeden programın yapısını (ağacını) çıkarır:
+#
+#      var x = 2 + 3 * 4     →     DegiskenTanimi x
+#                                  └─ IkiliIslem +
+#                                     ├─ Sayi 2
+#                                     └─ IkiliIslem *     (çarpma daha derinde: önce o yapılır)
+#                                        ├─ Sayi 3
+#                                        └─ Sayi 4
+#
+#  derleyici/parser.py'nin Vash'a çevrilmiş hâlidir; vashc/karsilastir_parser.py ile
+#  birebir aynı ağacı kurduğu kontrol edilir.
+#
+#  Python'dan farkları:
+#    - Python'da 45 çeşit düğüm sınıfı var; burada TEK bir düğüm tipi var (Dugum).
+#      Her düğüm ne olduğunu 'tur' alanında söyler ("IkiliIslem", "Eger" ...).
+#      Boş bir yer (Python'daki None) için "Bos" düğümü, bir liste için "[]" düğümü kullanılır.
+#    - Python hatayı "fırlatır". Burada ilk hata not edilir, okuma yeri dosyanın sonuna
+#      atılır (her şey hızla durur) ve sonuç Hata(mesaj) olur.
+# =====================================================================
+
+import lexer
+import dil
+
+type Dugum {
+    tur: text               # "DegiskenTanimi", "IkiliIslem", "Sayi", "[]", "Bos" ...
+    deger: text             # ana bilgi: ad, işaret, sayı, metin
+    ek: text                # ikinci bilgi: "global", "change", "later", izinler...
+    cocuklar: [Dugum]       # alt düğümler (Python'daki alanların sırasıyla)
+    satir: int
+    sutun: int
+    tip: text = ""          # tip kontrolü dolduracak: "int", "[text]", "Ogrenci?" ...
+    dosya: text = ""        # başka bir dosyadan (modülden) geldiyse o dosyanın adı
+}
+
+enum Sonuc {
+    Tamam(agac: Dugum)
+    Hata(mesaj: text)
+}
+
+# --- Okuyucunun durumu ---
+global var TOKENLAR: [lexer.Token] = []
+global var KONUM = 1                         # şu an hangi kelimeye bakıyoruz
+global var HATA = ""                         # ilk hata ("" ise yok)
+
+# Diğer dillerden alışkanlıkla yazılan kelimeler → bu dildeki karşılığı
+global var YABANCI_KELIMELER = {
+    "while": "Bu dilde döngüler 'repeat' ile başlar:   repeat while x > 0 \{ \}",
+    "for": "Bu dilde döngüler 'repeat' ile başlar:   repeat i from 1 to 10 \{ \}",
+    "break": "Bu dilde döngüden çıkmak için 'stop' yazılır.",
+    "continue": "Bu dilde bir turu atlamak için 'skip' yazılır.",
+    "elif": "Bu dilde 'elif' yok, 'else if' yazılır:   \} else if x > 0 \{",
+    "else": "'else' tek başına olamaz, bir 'if' bloğunun hemen arkasından gelmeli."
+}
+
+# Aynı açıklamaların İngilizcesi
+global var YABANCI_KELIMELER_EN = {
+    "while": "Loops in this language start with 'repeat':   repeat while x > 0 \{ \}",
+    "for": "Loops in this language start with 'repeat':   repeat i from 1 to 10 \{ \}",
+    "break": "To leave a loop in this language, write 'stop'.",
+    "continue": "To skip to the next round of a loop in this language, write 'skip'.",
+    "elif": "This language has no 'elif'; write 'else if':   \} else if x > 0 \{",
+    "else": "'else' can't stand alone; it must come right after an 'if' block."
+}
+
+# =====================================================================
+#  Düğüm yapmak
+# =====================================================================
+fn _d(tur: text, deger: text, ek: text, cocuklar: [Dugum], t: lexer.Token) -> Dugum {
+    return Dugum(tur: tur, deger: deger, ek: ek, cocuklar: cocuklar, satir: t.satir, sutun: t.sutun)
+}
+
+fn _liste(cocuklar: [Dugum]) -> Dugum {
+    return Dugum(tur: "[]", deger: "", ek: "", cocuklar: cocuklar, satir: 0, sutun: 0)
+}
+
+fn _bos() -> Dugum {
+    return Dugum(tur: "Bos", deger: "", ek: "", cocuklar: [], satir: 0, sutun: 0)
+}
+
+# =====================================================================
+#  Küçük yardımcılar
+# =====================================================================
+fn _simdiki() -> lexer.Token {
+    return TOKENLAR[KONUM]
+}
+
+fn _sonraki() -> lexer.Token {
+    var k = KONUM + 1
+    if k > TOKENLAR.length {
+        k = TOKENLAR.length
+    }
+    return TOKENLAR[k]
+}
+
+fn _bu_mu(tur: text) -> bool {
+    return TOKENLAR[KONUM].tur is tur
+}
+
+fn _tamam() -> bool {
+    return HATA.length is 0
+}
+
+fn _ilerle() -> lexer.Token {
+    use change KONUM
+    var t = TOKENLAR[KONUM]
+    if t.tur is not "SON" {
+        KONUM = KONUM + 1
+    }
+    return t
+}
+
+# İlk hatayı not et ve okumayı dosyanın sonuna at: bütün döngüler hemen durur
+fn _hata(mesaj: text) {
+    use change HATA
+    use change KONUM
+    if HATA.length is 0 {
+        HATA = mesaj
+    }
+    KONUM = TOKENLAR.length
+}
+
+fn _token_adi(t: lexer.Token) -> text {
+    if t.tur is "YENİ_SATIR" { return dil.sec("satır sonu", "end of line") }
+    if t.tur is "SON" { return dil.sec("dosyanın sonu", "end of file") }
+    if t.tur is "İSİM" { return "'{t.deger}'" }
+    if t.tur is "SAYI" { return dil.sec("{t.deger} sayısı", "the number {t.deger}") }
+    if t.tur is "METİN" { return dil.sec("\"{t.deger}\" metni", "the text \"{t.deger}\"") }
+    return "'{t.tur}'"
+}
+
+fn _bekle(tur: text, aciklama: text) -> lexer.Token {
+    if _bu_mu(tur) {
+        return _ilerle()
+    }
+    var t = _simdiki()
+    _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: {aciklama} bekliyordum, ama {_token_adi(t)} geldi.", "Line {t.satir}, column {t.sutun}: Expected {aciklama}, but found {_token_adi(t)}."))
+    return t
+}
+
+fn _bosluklari_atla() {
+    repeat while _bu_mu("YENİ_SATIR") or _bu_mu(";") {
+        _ilerle()
+    }
+}
+
+fn _satir_sonlarini_atla() {
+    repeat while _bu_mu("YENİ_SATIR") {
+        _ilerle()
+    }
+}
+
+fn _komut_sonu() {
+    if _bu_mu("YENİ_SATIR") or _bu_mu(";") {
+        _ilerle()
+    } else if not (_bu_mu("\}") or _bu_mu("SON")) {
+        var t = _simdiki()
+        _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: Komut burada bitmeliydi, ama {_token_adi(t)} geldi.\n   Aynı satıra iki komut yazmak istiyorsan araya ';' koy.", "Line {t.satir}, column {t.sutun}: The command should end here, but found {_token_adi(t)}.\n   If you want two commands on the same line, put ';' between them."))
+    }
+}
+
+fn _baglamsal_mi(kelime: text) -> bool {
+    return _bu_mu("İSİM") and _simdiki().deger is kelime
+}
+
+# =====================================================================
+#  PROGRAM ve BLOKLAR
+# =====================================================================
+fn agac_kur(tokenlar: [lexer.Token]) -> Sonuc {
+    use change TOKENLAR
+    use change KONUM
+    use change HATA
+    TOKENLAR = tokenlar
+    KONUM = 1
+    HATA = ""
+    var komutlar: [Dugum] = []
+    _bosluklari_atla()
+    repeat while not _bu_mu("SON") and _tamam() {
+        if _bu_mu("\}") {
+            var t = _simdiki()
+            _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: Bu '\}' hiçbir bloğu kapatmıyor, fazladan yazılmış.", "Line {t.satir}, column {t.sutun}: This '\}' doesn't close any block; it is extra."))
+            stop
+        }
+        komutlar.add(_komut())
+        _bosluklari_atla()
+    }
+    if HATA.length > 0 {
+        return Sonuc.Hata(mesaj: HATA)
+    }
+    return Sonuc.Tamam(agac: Dugum(tur: "Program", deger: "", ek: "", cocuklar: komutlar, satir: 0, sutun: 0))
+}
+
+# Metnin içindeki {...} kısmı için: TEK bir ifade oku.
+# Sonuç: Tamam(ifade) / Hata(mesaj).  Arkasında başka şey kalırsa Hata("") döner (tek değer değil).
+fn ifade_kur(tokenlar: [lexer.Token]) -> Sonuc {
+    use change TOKENLAR
+    use change KONUM
+    use change HATA
+    TOKENLAR = tokenlar
+    KONUM = 1
+    HATA = ""
+    var e = _ifade()
+    if HATA.length > 0 {
+        return Sonuc.Hata(mesaj: HATA)
+    }
+    _satir_sonlarini_atla()
+    if not _bu_mu("SON") {
+        return Sonuc.Hata(mesaj: "")
+    }
+    return Sonuc.Tamam(agac: e)
+}
+
+fn _blok() -> [Dugum] {
+    var acilis = _bekle("\{", dil.sec("bloğu başlatan '\{'", "'\{' to start the block"))
+    var komutlar: [Dugum] = []
+    _bosluklari_atla()
+    repeat while not _bu_mu("\}") and _tamam() {
+        if _bu_mu("SON") {
+            _hata(dil.sec("Satır {acilis.satir}, sütun {acilis.sutun}: Bu '\{' hiç kapatılmamış.\n   Bloğun sonuna '\}' eklemeyi unutmuş olabilirsin.", "Line {acilis.satir}, column {acilis.sutun}: This '\{' is never closed.\n   You may have forgotten to add '\}' at the end of the block."))
+            stop
+        }
+        komutlar.add(_komut())
+        _bosluklari_atla()
+    }
+    _ilerle()
+    return komutlar
+}
+
+# =====================================================================
+#  KOMUTLAR: ilk kelimeye bakarak hangi komut olduğuna karar veriyoruz
+# =====================================================================
+fn _komut() -> Dugum {
+    var t = _simdiki()
+    var k = _bos()
+    if t.tur is "var" {
+        k = _degisken_tanimi()
+    } else if t.tur is "global" {
+        var bas = _ilerle()
+        if not _bu_mu("var") {
+            _hata(dil.sec("Satır {bas.satir}, sütun {bas.sutun}: 'global' kelimesinden sonra 'var' gelmeli.\n   Örnek:   global var PI = 3.14", "Line {bas.satir}, column {bas.sutun}: 'var' must come after the word 'global'.\n   Example:   global var PI = 3.14"))
+            return _bos()
+        }
+        var d = _degisken_tanimi()
+        k = Dugum(tur: d.tur, deger: d.deger, ek: "global", cocuklar: d.cocuklar, satir: bas.satir, sutun: bas.sutun)
+    } else if t.tur is "use" {
+        k = _use_komutu()
+    } else if t.tur is "if" {
+        return _eger()
+    } else if t.tur is "repeat" {
+        return _tekrar()
+    } else if t.tur is "when" {
+        return _when_komutu()
+    } else if t.tur is "type" {
+        return _tip_tanimi()
+    } else if t.tur is "enum" {
+        return _enum_tanimi()
+    } else if t.tur is "extern" {
+        return _extern_blogu()
+    } else if t.tur is "import" {
+        var bas = _ilerle()
+        var ad = _bekle("İSİM", dil.sec("içe alınacak dosyanın adını, .vash olmadan (ör: import geometri)", "the name of the file to import, without .vash (e.g. import geometry)"))
+        k = _d("ImportKomutu", ad.deger, "", [], bas)
+    } else if t.tur is "match" {
+        return _match_komutu()
+    } else if t.tur is "İSİM" and t.deger is "window" and _sonraki().tur is "METİN" {
+        return _pencere()
+    } else if t.tur is "İSİM" and t.deger is "parallel" and (_sonraki().tur is "\{" or _sonraki().tur is "repeat") {
+        var pbas = _ilerle()                 # parallel { ... } / parallel repeat i from a to b { ... }
+        if _bu_mu("repeat") {
+            var d = _tekrar()
+            if not _tamam() {
+                return _bos()
+            }
+            if d.tur is not "TekrarSayac" {
+                _hata(dil.sec("Satır {pbas.satir}, sütun {pbas.sutun}: 'parallel' sadece sayaçlı döngüyle kullanılabilir.\n   Örnek:   parallel repeat i from 1 to n \{ ... \}", "Line {pbas.satir}, column {pbas.sutun}: 'parallel' can only be used with a counting loop.\n   Example:   parallel repeat i from 1 to n \{ ... \}"))
+                return _bos()
+            }
+            return Dugum(tur: "ParalelTekrar", deger: d.deger, ek: "", cocuklar: d.cocuklar, satir: pbas.satir, sutun: pbas.sutun)
+        }
+        return _d("ParalelBlok", "", "", [_liste(_blok())], pbas)
+    } else if t.tur is "İSİM" and t.deger is "arena" and _sonraki().tur is "\{" {
+        var bas = _ilerle()                  # arena { ... }: bağlamsal kelime (arena adlı değişken de olabilir)
+        return _d("ArenaBlok", "", "", [_liste(_blok())], bas)
+    } else if t.tur is "İSİM" and t.deger is "fail" and (_sonraki().tur is "METİN" or _sonraki().tur is "İSİM") {
+        var fbas = _ilerle()                 # fail "mesaj": hata ver
+        k = _d("HataVer", "", "", [_ifade()], fbas)
+    } else if t.tur is "İSİM" and t.deger is "do" and _sonraki().tur is "\{" {
+        return _yakala()
+    } else if t.tur is "stop" {
+        k = _d("Dur", "", "", [], _ilerle())
+    } else if t.tur is "skip" {
+        k = _d("Atla", "", "", [], _ilerle())
+    } else if t.tur is "while" or t.tur is "else" {
+        _yabanci_kelime(t.tur)
+        return _bos()
+    } else if t.tur is "İSİM" and YABANCI_KELIMELER.has(t.deger) and _sonraki().tur is not "=" and _sonraki().tur is not "(" {
+        _yabanci_kelime(t.deger)
+        return _bos()
+    } else if t.tur is "fn" {
+        return _fonksiyon_tanimi()
+    } else if t.tur is "return" {
+        k = _donus()
+    } else if t.tur is "İSİM" and _sonraki().tur is "=" {
+        k = _atama()
+    } else {
+        var bas = _simdiki()
+        var e = _ifade()
+        if _bu_mu("=") {
+            var esittir = _ilerle()
+            if e.tur is "Erisim" {
+                k = _d("ElemanAtama", "", "", [e.cocuklar[1], e.cocuklar[2], _ifade()], bas)
+            } else if e.tur is "Ozellik" {
+                k = _d("AlanAtama", e.deger, "", [e.cocuklar[1], _ifade()], bas)
+            } else {
+                _hata(dil.sec("Satır {esittir.satir}, sütun {esittir.sutun}: '=' işaretinin solunda bir değişken, liste elemanı (liste[i]) ya da alan (nesne.alan) olmalı.", "Line {esittir.satir}, column {esittir.sutun}: The left side of '=' must be a variable, a list item (list[i]) or a field (object.field)."))
+                return _bos()
+            }
+        } else {
+            k = _d("IfadeKomutu", "", "", [e], bas)
+        }
+    }
+    _komut_sonu()
+    return k
+}
+
+# do { ... } catch hata { ... }
+fn _yakala() -> Dugum {
+    var bas = _ilerle()                      # 'do'
+    var govde = _blok()
+    if not _tamam() {
+        return _bos()
+    }
+    var t = _simdiki()
+    if not (_bu_mu("İSİM") and t.deger is "catch") {
+        _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: 'do' bloğunun hemen arkasından 'catch' gelmeli:   do \{ ... \} catch hata \{ ... \}", "Line {t.satir}, column {t.sutun}: 'catch' must come right after the 'do' block:   do \{ ... \} catch error \{ ... \}"))
+        return _bos()
+    }
+    _ilerle()
+    var ad = _bekle("İSİM", dil.sec("yakalanan hataya verilecek adı (ör: catch hata)", "a name for the caught error (e.g. catch error)")).deger
+    var yakalama = _blok()
+    return _d("Yakala", ad, "", [_liste(govde), _liste(yakalama)], bas)
+}
+
+fn _yabanci_kelime(kelime: text) {
+    var t = _simdiki()
+    _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: {YABANCI_KELIMELER[kelime]}", "Line {t.satir}, column {t.sutun}: {YABANCI_KELIMELER_EN[kelime]}"))
+}
+
+fn _degisken_tanimi() -> Dugum {
+    var bas = _ilerle()                      # 'var'
+    var ad = _bekle("İSİM", dil.sec("değişkenin adını", "the variable's name")).deger
+    var tip = _bos()
+    if _bu_mu(":") {
+        _ilerle()
+        tip = _tip()
+    }
+    _bekle("=", dil.sec("'{ad}' değişkenine değer vermek için '='", "'=' to give a value to the variable '{ad}'"))
+    var deger = _ifade()
+    return _d("DegiskenTanimi", ad, "", [tip, deger], bas)
+}
+
+# ---------- if / else ----------
+fn _eger() -> Dugum {
+    use change KONUM
+    var bas = _ilerle()                      # 'if'
+    var kosul = _ifade()
+    var govde = _blok()
+    var degilse = _bos()
+    var geri = KONUM                         # "else" aynı satırda da alt satırda da olabilir
+    _bosluklari_atla()
+    if _bu_mu("else") {
+        _ilerle()
+        if _bu_mu("if") {
+            degilse = _liste([_eger()])       # else if → içinde yeni bir if
+        } else {
+            degilse = _liste(_blok())
+        }
+    } else if _tamam() {
+        KONUM = geri
+    }
+    return _d("Eger", "", "", [kosul, _liste(govde), degilse], bas)
+}
+
+# ---------- type ----------
+fn _tip_tanimi() -> Dugum {
+    var bas = _ilerle()                      # 'type'
+    var ad = _bekle("İSİM", dil.sec("tipin adını", "the type's name")).deger
+    var tip_parametreleri: [Dugum] = []
+    if _bu_mu("[") {                                 # type Kutu[T] { deger: T }: generic tip
+        _ilerle()
+        repeat while _tamam() {
+            var tp = _bekle("İSİM", dil.sec("tip parametresinin adını (ör: T)", "the name of a type parameter (e.g. T)"))
+            tip_parametreleri.add(_d("Isim", tp.deger, "", [], tp))
+            if _bu_mu(",") {
+                _ilerle()
+            } else {
+                stop
+            }
+        }
+        _bekle("]", dil.sec("tip parametrelerini kapatan ']' (ör: type Kutu[T] ...)", "']' to close the type parameters (e.g. type Box[T] ...)"))
+    }
+    var acilis = _bekle("\{", dil.sec("tipin içini başlatan '\{'", "'\{' to start the type's body"))
+    var alanlar: [Dugum] = []
+    var metotlar: [Dugum] = []
+    _bosluklari_atla()
+    repeat while not _bu_mu("\}") and _tamam() {
+        if _bu_mu("SON") {
+            _hata(dil.sec("Satır {acilis.satir}, sütun {acilis.sutun}: '{ad}' tipinin '\{' işareti kapatılmamış.", "Line {acilis.satir}, column {acilis.sutun}: The '\{' of type '{ad}' is not closed."))
+            stop
+        }
+        if _bu_mu("fn") {
+            metotlar.add(_fonksiyon_tanimi())
+        } else {
+            var t = _bekle("İSİM", dil.sec("'{ad}' tipinin içinde bir alan (ör: ad: text) ya da metot (fn ...)", "a field (e.g. name: text) or a method (fn ...) inside type '{ad}'"))
+            _bekle(":", dil.sec("'{t.deger}' alanının tipini yazmak için ':'", "':' to write the type of field '{t.deger}'"))
+            var tip = _tip()
+            var varsayilan = _bos()
+            if _bu_mu("=") {
+                _ilerle()
+                varsayilan = _ifade()
+            }
+            alanlar.add(_d("Alan", t.deger, "", [tip, varsayilan], t))
+            _komut_sonu()
+        }
+        _bosluklari_atla()
+    }
+    _ilerle()
+    if tip_parametreleri.length > 0 {               # generic: 3. çocuk tip parametreleri
+        return _d("TipTanimi", ad, "", [_liste(alanlar), _liste(metotlar), _liste(tip_parametreleri)], bas)
+    }
+    return _d("TipTanimi", ad, "", [_liste(alanlar), _liste(metotlar)], bas)
+}
+
+# ---------- lambda: fn(a, b) => ifade  ya da  fn(a: int) -> int { ... } ----------
+#  Parametre tipleri yazılmazsa beklenen tipten bulunur (ör: liste.sort(by: fn(a, b) => a < b)).
+fn _lambda() -> Dugum {
+    var bas = _ilerle()                      # 'fn'
+    _ilerle()                                # '('
+    var parametreler: [Dugum] = []
+    repeat while not _bu_mu(")") and _tamam() {
+        var p = _bekle("İSİM", dil.sec("lambda parametresinin adını", "the lambda parameter's name"))
+        var tip = _bos()
+        if _bu_mu(":") {
+            _ilerle()
+            tip = _tip()
+        }
+        parametreler.add(_d("Parametre", p.deger, "", [tip], p))
+        if not _bu_mu(")") {
+            _bekle(",", dil.sec("parametreleri ayıran ',' ya da kapatan ')'", "',' between parameters or ')' to close them"))
+        }
+    }
+    _bekle(")", dil.sec("lambda parametrelerini kapatan ')'", "')' to close the lambda parameters"))
+    var donus = _bos()
+    if _bu_mu("->") {
+        _ilerle()
+        donus = _tip()
+    }
+    if _bu_mu("=>") {
+        _ilerle()
+        return _d("Lambda", "", "ifade", [_liste(parametreler), donus, _ifade()], bas)
+    }
+    if not _bu_mu("\{") {
+        var t = _simdiki()
+        _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: lambda'dan sonra '=>' ve bir ifade ya da '\{' ile bir blok gelmeli:   fn(x) => x * 2", "Line {t.satir}, column {t.sutun}: after a lambda's parameters, '=>' and an expression or a '\{' block must come:   fn(x) => x * 2"))
+        return _bos()
+    }
+    return _d("Lambda", "", "blok", [_liste(parametreler), donus, _liste(_blok())], bas)
+}
+
+# ---------- parametre listesi: (a: int, b: text) ----------
+fn _parametreler() -> [Dugum] {
+    var parametreler: [Dugum] = []
+    repeat while not _bu_mu(")") and _tamam() {
+        var p = _bekle("İSİM", dil.sec("parametrenin adını", "the parameter's name"))
+        _bekle(":", dil.sec("'{p.deger}' parametresinin tipini yazmak için ':'", "':' to write the type of parameter '{p.deger}'"))
+        parametreler.add(_d("Parametre", p.deger, "", [_tip()], p))
+        if not _bu_mu(")") {
+            _bekle(",", dil.sec("parametreleri ayıran ',' ya da kapatan ')'", "',' between parameters or ')' to close them"))
+        }
+    }
+    _ilerle()                                # ')'
+    return parametreler
+}
+
+# ---------- extern: C'de yazılmış hazır fonksiyonlar ----------
+fn _extern_blogu() -> Dugum {
+    var bas = _ilerle()                      # 'extern'
+    var k = _bekle("METİN", dil.sec("kütüphanenin adını tırnak içinde (ör: extern \"msvcrt\" \{ ... \})", "the library name in quotes (e.g. extern \"msvcrt\" \{ ... \})"))
+    var izinler: [text] = []
+    var izin_dugumleri: [Dugum] = []                 # yerleri de lazım: yanlış izin adında hata tam orayı göstersin
+    if _baglamsal_mi("needs") {
+        _ilerle()
+        var it = _bekle("İSİM", dil.sec("gereken iznin adını (ör: needs files)", "the name of the needed permission (e.g. needs files)"))
+        izinler.add(it.deger)
+        izin_dugumleri.add(_d("Izin", it.deger, "", [], it))
+        repeat while _bu_mu(",") and _tamam() {
+            _ilerle()
+            var it2 = _bekle("İSİM", dil.sec("gereken iznin adını", "the name of the needed permission"))
+            izinler.add(it2.deger)
+            izin_dugumleri.add(_d("Izin", it2.deger, "", [], it2))
+        }
+    }
+    var acilis = _bekle("\{", dil.sec("fonksiyonların listesini başlatan '\{'", "'\{' to start the list of functions"))
+    var fonksiyonlar: [Dugum] = []
+    var yapilar: [Dugum] = []                        # C'nin yapıları: type Renk { r: u8 ... }
+    _bosluklari_atla()
+    repeat while not _bu_mu("\}") and _tamam() {
+        if _bu_mu("SON") {
+            _hata(dil.sec("Satır {acilis.satir}, sütun {acilis.sutun}: extern bloğunun '\{' işareti kapatılmamış.", "Line {acilis.satir}, column {acilis.sutun}: The '\{' of the extern block is not closed."))
+            stop
+        }
+        if _bu_mu("type") {
+            yapilar.add(_tip_tanimi())
+            _bosluklari_atla()
+            skip
+        }
+        var fn_t = _bekle("fn", dil.sec("'fn' ile başlayan bir fonksiyon tanıtımı (ör: fn sqrt(x: float) -> float)", "a function declaration starting with 'fn' (e.g. fn sqrt(x: float) -> float)"))
+        var ad = _bekle("İSİM", dil.sec("fonksiyonun adını", "the function's name")).deger
+        _bekle("(", dil.sec("parametreleri başlatan '('", "'(' to start the parameters"))
+        var parametreler = _parametreler()
+        var donus = _bos()
+        if _bu_mu("->") {
+            _ilerle()
+            donus = _tip()
+        }
+        if _bu_mu("\{") {
+            var t = _simdiki()
+            _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: extern içindeki fonksiyonların gövdesi yazılmaz; kodu zaten kütüphanede hazır. Sadece adını ve tiplerini yaz.", "Line {t.satir}, column {t.sutun}: Functions inside extern have no body; their code is already in the library. Just write their names and types."))
+            stop
+        }
+        fonksiyonlar.add(_d("ExternFonksiyon", ad, "", [_liste(parametreler), donus], fn_t))
+        _bosluklari_atla()
+    }
+    _ilerle()
+    var cocuklar = [_liste(fonksiyonlar), _liste(izin_dugumleri)]
+    if yapilar.length > 0 {
+        cocuklar.add(_liste(yapilar))                # 3. çocuk sadece yapı varsa (eski ağaçlar aynı kalsın)
+    }
+    return _d("ExternBlok", k.deger, izinler.join(","), cocuklar, bas)
+}
+
+# ---------- enum ve match ----------
+fn _enum_tanimi() -> Dugum {
+    var bas = _ilerle()                      # 'enum'
+    var ad = _bekle("İSİM", dil.sec("enum'un adını", "the enum's name")).deger
+    var acilis = _bekle("\{", dil.sec("'{ad}' enum'unun çeşitlerini başlatan '\{'", "'\{' to start the variants of enum '{ad}'"))
+    var cesitler: [Dugum] = []
+    _bosluklari_atla()
+    repeat while not _bu_mu("\}") and _tamam() {
+        if _bu_mu("SON") {
+            _hata(dil.sec("Satır {acilis.satir}, sütun {acilis.sutun}: '{ad}' enum'unun '\{' işareti kapatılmamış.", "Line {acilis.satir}, column {acilis.sutun}: The '\{' of enum '{ad}' is not closed."))
+            stop
+        }
+        var t = _bekle("İSİM", dil.sec("'{ad}' enum'unun bir çeşidinin adını (ör: Nakit ya da Kart(no: text))", "the name of a variant of enum '{ad}' (e.g. Cash or Card(no: text))"))
+        var alanlar: [Dugum] = []
+        if _bu_mu("(") {
+            _ilerle()
+            repeat while not _bu_mu(")") and _tamam() {
+                var a = _bekle("İSİM", dil.sec("alanın adını (ör: no: text)", "the field's name (e.g. no: text)"))
+                _bekle(":", dil.sec("'{a.deger}' alanının tipini yazmak için ':'", "':' to write the type of field '{a.deger}'"))
+                alanlar.add(_d("Alan", a.deger, "", [_tip(), _bos()], a))
+                if not _bu_mu(")") {
+                    _bekle(",", dil.sec("alanları ayıran ',' ya da kapatan ')'", "',' between fields or ')' to close them"))
+                }
+            }
+            _ilerle()
+        }
+        cesitler.add(_d("EnumCesidi", t.deger, "", [_liste(alanlar)], t))
+        if _bu_mu(",") {
+            _ilerle()
+        }
+        _bosluklari_atla()
+    }
+    _ilerle()
+    return _d("EnumTanimi", ad, "", [_liste(cesitler)], bas)
+}
+
+fn _match_komutu() -> Dugum {
+    var bas = _ilerle()                      # 'match'
+    var deger = _ifade()
+    var acilis = _bekle("\{", dil.sec("match'in durumlarını başlatan '\{'", "'\{' to start the cases of match"))
+    var durumlar: [Dugum] = []
+    var degilse = _bos()
+    var else_var = false
+    _bosluklari_atla()
+    repeat while not _bu_mu("\}") and _tamam() {
+        if _bu_mu("SON") {
+            _hata(dil.sec("Satır {acilis.satir}, sütun {acilis.sutun}: match'in '\{' işareti kapatılmamış.", "Line {acilis.satir}, column {acilis.sutun}: The '\{' of match is not closed."))
+            stop
+        }
+        if _bu_mu("else") {
+            var e = _ilerle()
+            if else_var {
+                _hata(dil.sec("Satır {e.satir}, sütun {e.sutun}: Bir match'te tek bir 'else' olabilir.", "Line {e.satir}, column {e.sutun}: A match can have only one 'else'."))
+                stop
+            }
+            degilse = _liste(_blok())
+            else_var = true
+        } else {
+            var t = _bekle("İSİM", dil.sec("bir çeşidin adını (ör: Kart(no, taksit) \{ ... \}) ya da 'else'", "a variant name (e.g. Card(no, installments) \{ ... \}) or 'else'"))
+            var adlar: [text] = []
+            if _bu_mu("(") {
+                _ilerle()
+                repeat while not _bu_mu(")") and _tamam() {
+                    adlar.add(_bekle("İSİM", dil.sec("alana verilecek adı", "a name for the field")).deger)
+                    if not _bu_mu(")") {
+                        _bekle(",", dil.sec("adları ayıran ',' ya da kapatan ')'", "',' between names or ')' to close them"))
+                    }
+                }
+                _ilerle()
+            }
+            durumlar.add(_d("MatchDurumu", t.deger, adlar.join(","), [_liste(_blok())], t))
+        }
+        _bosluklari_atla()
+    }
+    _ilerle()
+    return _d("MatchKomutu", "", "", [deger, _liste(durumlar), degilse], bas)
+}
+
+# ---------- window (görsel arayüz) ----------
+fn _pencere() -> Dugum {
+    var bas = _ilerle()                      # 'window'
+    var t = _ilerle()                        # başlık metni
+    var baslik = _d("Metin", t.deger, "", [], t)
+    return _d("Pencere", "", "", [baslik, _liste(_arayuz_blogu(dil.sec("pencerenin", "the window")))], bas)
+}
+
+fn _arayuz_blogu(kimin: text) -> [Dugum] {
+    var acilis = _bekle("\{", dil.sec("{kimin} içini başlatan '\{'", "'\{' to start the body of {kimin}"))
+    var ogeler: [Dugum] = []
+    _bosluklari_atla()
+    repeat while not _bu_mu("\}") and _tamam() {
+        if _bu_mu("SON") {
+            _hata(dil.sec("Satır {acilis.satir}, sütun {acilis.sutun}: Bu '\{' hiç kapatılmamış.", "Line {acilis.satir}, column {acilis.sutun}: This '\{' is never closed."))
+            stop
+        }
+        ogeler.add(_arayuz_ogesi())
+        _bosluklari_atla()
+    }
+    _ilerle()
+    return ogeler
+}
+
+fn _ogesi(tur: text, metin: Dugum, govde: [Dugum], hedef: text, cocuklar: [Dugum], eleman: text, sira_adi: text, kaynak: Dugum, t: lexer.Token) -> Dugum {
+    return _d("ArayuzOgesi", tur, "{hedef},{eleman},{sira_adi}",
+              [metin, _liste(govde), _liste(cocuklar), kaynak], t)
+}
+
+fn _arayuz_ogesi() -> Dugum {
+    var t = _simdiki()
+    var tur = ""
+    if t.tur is "İSİM" {
+        tur = t.deger
+    }
+    if not "|label|button|textbox|checkbox|row|list|".contains("|{tur}|") or tur.length is 0 {
+        var ne = "'{t.tur}'"
+        if t.tur is "İSİM" or t.tur is "SAYI" or t.tur is "ONDALIK" or t.tur is "METİN" {
+            ne = "'{t.deger}'"
+        }
+        _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: Pencerenin içinde {ne} yazılamaz.\n   Kullanılabilenler: label, button, textbox, checkbox, row, list\n   Hesap yapmak istiyorsan bunu bir button'un bloğuna ya da pencereden önceye yaz.", "Line {t.satir}, column {t.sutun}: {ne} can't be written inside a window.\n   You can use: label, button, textbox, checkbox, row, list\n   If you want to calculate something, put it in a button's block or before the window."))
+        return _bos()
+    }
+    _ilerle()
+    if tur is "row" {
+        return _ogesi("row", _bos(), [], "", _arayuz_blogu(dil.sec("row'un", "the row")), "", "", _bos(), t)
+    }
+    if tur is "list" {
+        var ornek = dil.sec("(ör: list urun, i in urunler \{ label urun \})", "(e.g. list item, i in items \{ label item \})")
+        var eleman = _bekle("İSİM", dil.sec("her satırdaki elemana verilecek adı {ornek}", "a name for the item in each row {ornek}")).deger
+        var sira_adi = ""
+        if _bu_mu(",") {
+            _ilerle()
+            sira_adi = _bekle("İSİM", dil.sec("satırın sıra numarasına verilecek adı {ornek}", "a name for the row's position number {ornek}")).deger
+        }
+        if not _baglamsal_mi("in") {
+            var s = _simdiki()
+            _hata(dil.sec("Satır {s.satir}, sütun {s.sutun}: '{eleman}' adından sonra 'in' ve gösterilecek liste gelmeli {ornek}.", "Line {s.satir}, column {s.sutun}: After the name '{eleman}', 'in' and the list to show must come {ornek}."))
+            return _bos()
+        }
+        _ilerle()
+        var kaynak = _ifade()
+        var hedef = ""
+        if _bu_mu("->") {
+            _ilerle()
+            hedef = _bekle("İSİM", dil.sec("seçilen satırın sırasını tutacak değişkenin adını", "the name of the variable that will hold the selected row's position")).deger
+        }
+        return _ogesi("list", _bos(), [], hedef, _arayuz_blogu(dil.sec("list'in", "the list")), eleman, sira_adi, kaynak, t)
+    }
+    var metin = _ifade()
+    var o = _bos()
+    if tur is "label" {
+        o = _ogesi("label", metin, [], "", [], "", "", _bos(), t)
+    } else if tur is "button" {
+        o = _ogesi("button", metin, _blok(), "", [], "", "", _bos(), t)
+    } else {
+        _bekle("->", dil.sec("{tur}'un bağlanacağı değişkeni göstermek için '->' (ör: {tur} \"Adın\" -> ad)", "'->' to show which variable the {tur} is bound to (e.g. {tur} \"Your name\" -> name)"))
+        var hedef = _bekle("İSİM", dil.sec("bağlanacak değişkenin adını", "the name of the variable to bind")).deger
+        o = _ogesi(tur, metin, [], hedef, [], "", "", _bos(), t)
+    }
+    if tur is not "button" {
+        _komut_sonu()
+    }
+    return o
+}
+
+# ---------- when ----------
+fn _when_komutu() -> Dugum {
+    var bas = _ilerle()                      # 'when'
+    var bekle = ""
+    # "later" bağlamsal: arkasından bir ifadenin BAŞLANGICI geliyorsa özel anlamlı
+    if _bu_mu("İSİM") and _simdiki().deger is "later" and "|İSİM|SAYI|ONDALIK|METİN|(|[|-|not|true|false|".contains("|{_sonraki().tur}|") {
+        _ilerle()
+        bekle = "later"
+    }
+    var kosul = _ifade()
+    return _d("WhenKomutu", "", bekle, [kosul, _liste(_blok())], bas)
+}
+
+# ---------- Döngüler ----------
+fn _tekrar() -> Dugum {
+    var bas = _ilerle()                      # 'repeat'
+    if _bu_mu("while") {                     # repeat while kosul { }
+        _ilerle()
+        var kosul = _ifade()
+        return _d("TekrarSurece", "", "", [kosul, _liste(_blok())], bas)
+    }
+    if _bu_mu("İSİM") and _sonraki().tur is "İSİM" and _sonraki().deger is "from" {   # repeat i from 1 to 10 [step 2]
+        var ad = _ilerle().deger
+        _ilerle()                            # 'from'
+        var bas_deger = _ifade()
+        if not _baglamsal_mi("to") {
+            var t = _simdiki()
+            _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: Nereye kadar sayılacağını yazmak için 'to' bekliyordum.\n   Örnek:   repeat {ad} from 1 to 10 \{ \}", "Line {t.satir}, column {t.sutun}: Expected 'to', to say how far to count.\n   Example:   repeat {ad} from 1 to 10 \{ \}"))
+            return _bos()
+        }
+        _ilerle()                            # 'to'
+        var son = _ifade()
+        var adim = _bos()
+        if _baglamsal_mi("step") {
+            _ilerle()
+            adim = _ifade()
+        }
+        return _d("TekrarSayac", ad, "", [bas_deger, son, adim, _liste(_blok())], bas)
+    }
+    var sayi = _ifade()                      # repeat 3 { }
+    return _d("TekrarSayi", "", "", [sayi, _liste(_blok())], bas)
+}
+
+fn _use_komutu() -> Dugum {
+    var bas = _ilerle()                      # 'use'
+    var degistirebilir = ""
+    if _bu_mu("İSİM") and _simdiki().deger is "change" and _sonraki().tur is "İSİM" {
+        _ilerle()
+        degistirebilir = "change"
+    }
+    var ad = _bekle("İSİM", dil.sec("dışarıdan çağrılacak değişkenin adını", "the name of the outside variable to use")).deger
+    return _d("UseKomutu", ad, degistirebilir, [], bas)
+}
+
+fn _atama() -> Dugum {
+    var ad_token = _ilerle()
+    _ilerle()                                # '='
+    var deger = _ifade()
+    return _d("Atama", ad_token.deger, "", [deger], ad_token)
+}
+
+fn _fonksiyon_tanimi() -> Dugum {
+    var bas = _ilerle()                      # 'fn'
+    var degistirir = ""
+    if _bu_mu("İSİM") and _simdiki().deger is "change" and _sonraki().tur is "İSİM" {
+        _ilerle()
+        degistirir = "change"
+    }
+    var ad = _bekle("İSİM", dil.sec("fonksiyonun adını", "the function's name")).deger
+    var tip_parametreleri: [Dugum] = []
+    if _bu_mu("[") {                                 # fn ilk[T](l: [T]) -> T: generic
+        _ilerle()
+        repeat while _tamam() {
+            var tp = _bekle("İSİM", dil.sec("tip parametresinin adını (ör: T)", "the name of a type parameter (e.g. T)"))
+            tip_parametreleri.add(_d("Isim", tp.deger, "", [], tp))
+            if _bu_mu(",") {
+                _ilerle()
+            } else {
+                stop
+            }
+        }
+        _bekle("]", dil.sec("tip parametrelerini kapatan ']' (ör: fn ilk[T](...))", "']' to close the type parameters (e.g. fn first[T](...))"))
+    }
+    _bekle("(",dil.sec("parametreleri başlatan '('", "'(' to start the parameters"))
+    var parametreler = _parametreler()
+    var donus_tipi = _bos()
+    if _bu_mu("->") {
+        _ilerle()
+        donus_tipi = _tip()
+    }
+    if _bu_mu("İSİM") and _simdiki().deger is "fails" and _sonraki().tur is "\{" {     # fn f() -> int fails { }: hata verebilir
+        _ilerle()
+        if degistirir.length > 0 {
+            degistirir = "change fails"
+        } else {
+            degistirir = "fails"
+        }
+    }
+    var govde = _blok()
+    if tip_parametreleri.length > 0 {               # generic: 4. çocuk tip parametreleri
+        return _d("FonksiyonTanimi", ad, degistirir, [_liste(parametreler), donus_tipi, _liste(govde), _liste(tip_parametreleri)], bas)
+    }
+    return _d("FonksiyonTanimi", ad, degistirir, [_liste(parametreler), donus_tipi, _liste(govde)], bas)
+}
+
+fn _donus() -> Dugum {
+    var bas = _ilerle()                      # 'return'
+    var deger = _bos()
+    if not (_bu_mu("YENİ_SATIR") or _bu_mu(";") or _bu_mu("\}") or _bu_mu("SON")) {
+        deger = _ifade()
+    }
+    return _d("Donus", "", "", [deger], bas)
+}
+
+# =====================================================================
+#  TİPLER:  int   [int]   {text: int}   Ogrenci?   geometri.Nokta
+# =====================================================================
+fn _tip() -> Dugum {
+    var bas = _simdiki()
+    var t = _temel_tip()
+    if _bu_mu("?") {
+        _ilerle()
+        return _d("SecmeliTip", "", "", [t], bas)
+    }
+    return t
+}
+
+fn _temel_tip() -> Dugum {
+    var bas = _simdiki()
+    if _bu_mu("[") {
+        _ilerle()
+        var eleman = _tip()
+        _bekle("]", dil.sec("liste tipini kapatan ']'", "']' to close the list type"))
+        return _d("ListeTipi", "", "", [eleman], bas)
+    }
+    if _bu_mu("fn") {                                 # fn(int, int) -> bool: fonksiyon tipi
+        _ilerle()
+        _bekle("(", dil.sec("fonksiyon tipinin parametrelerini başlatan '(' (ör: fn(int) -> int)", "'(' to start the parameters of a function type (e.g. fn(int) -> int)"))
+        var p_tipleri: [Dugum] = []
+        repeat while not _bu_mu(")") and _tamam() {
+            p_tipleri.add(_tip())
+            if not _bu_mu(")") {
+                _bekle(",", dil.sec("tipleri ayıran ',' ya da kapatan ')'", "',' between types or ')' to close them"))
+            }
+        }
+        _bekle(")", dil.sec("fonksiyon tipini kapatan ')'", "')' to close the function type"))
+        var d_tipi = _bos()
+        if _bu_mu("->") {
+            _ilerle()
+            d_tipi = _tip()
+        }
+        return _d("FnTipi", "", "", [_liste(p_tipleri), d_tipi], bas)
+    }
+    if _bu_mu("\{") {
+        _ilerle()
+        var anahtar = _tip()
+        _bekle(":", dil.sec("sözlük tipinde anahtarı değerden ayıran ':' (ör: \{text: int\})", "':' between key and value in a dictionary type (e.g. \{text: int\})"))
+        var deger = _tip()
+        _bekle("\}", dil.sec("sözlük tipini kapatan '\}'", "'\}' to close the dictionary type"))
+        return _d("SozlukTipi", "", "", [anahtar, deger], bas)
+    }
+    var t = _bekle("İSİM", dil.sec("bir tip adı (ör: int)", "a type name (e.g. int)"))
+    var ad = t.deger
+    if ad is "channel" and _bu_mu("[") {                 # channel[text]: text taşıyan kanal
+        _ilerle()
+        var mesaj = _tip()
+        _bekle("]", dil.sec("kanal tipini kapatan ']' (ör: channel[text])", "']' to close the channel type (e.g. channel[text])"))
+        return _d("KanalTipi", "", "", [mesaj], t)
+    }
+    if ad is "task" and _bu_mu("[") {                    # task[text]: text döndüren arka plan işi
+        _ilerle()
+        if _bu_mu("]") {                                 # task[]: değer döndürmeyen iş
+            _ilerle()
+            return _d("IsTipi", "", "", [], t)
+        }
+        var sonuc = _tip()
+        _bekle("]", dil.sec("iş tipini kapatan ']' (ör: task[text])", "']' to close the task type (e.g. task[text])"))
+        return _d("IsTipi", "", "", [sonuc], t)
+    }
+    repeat while _bu_mu(".") and _sonraki().tur is "İSİM" and _tamam() {      # geometri.Nokta
+        _ilerle()
+        ad = "{ad}.{_ilerle().deger}"
+    }
+    if _bu_mu("[") {                                 # Kutu[int]: generic bir tipin kullanımı
+        _ilerle()
+        var tip_argumanlari: [Dugum] = []
+        repeat while _tamam() {
+            tip_argumanlari.add(_tip())
+            if _bu_mu(",") {
+                _ilerle()
+            } else {
+                stop
+            }
+        }
+        _bekle("]", dil.sec("tipin içini kapatan ']' (ör: Kutu[int])", "']' to close the type (e.g. Box[int])"))
+        return _d("GenerikTip", ad, "", tip_argumanlari, t)
+    }
+    return _d("TipAdi", ad, "", [], t)
+}
+
+# =====================================================================
+#  İFADELER ve İŞLEM ÖNCELİĞİ
+#    ifade → veya (or) → ve (and) → degil (not) → karsilastirma (is < > ...)
+#          → toplama (+ -) → carpma (* / // %) → tekli (-x) → birincil (5, "a", x, f() ...)
+#  Ağacın DERİNİNDE kalan işlem ÖNCE yapılır.
+# =====================================================================
+fn _ifade() -> Dugum {
+    var e = _veya()
+    if _bu_mu("else") and _sonraki().tur is ":" {        # bul("Can") else: yedek
+        var t = _ilerle()
+        _ilerle()                            # ':'
+        e = _d("YedekliDeger", "", "", [e, _ifade()], t)
+    }
+    return e
+}
+
+fn _veya() -> Dugum {
+    var sol = _ve()
+    repeat while _bu_mu("or") and _tamam() {
+        var op = _ilerle()
+        sol = _d("IkiliIslem", "or", "", [sol, _ve()], op)
+    }
+    return sol
+}
+
+fn _ve() -> Dugum {
+    var sol = _degil()
+    repeat while _bu_mu("and") and _tamam() {
+        var op = _ilerle()
+        sol = _d("IkiliIslem", "and", "", [sol, _degil()], op)
+    }
+    return sol
+}
+
+fn _degil() -> Dugum {
+    if _bu_mu("not") {
+        var op = _ilerle()
+        return _d("TekliIslem", "not", "", [_degil()], op)
+    }
+    return _karsilastirma()
+}
+
+fn _karsilastirma() -> Dugum {
+    var sol = _bit_veya()
+    if _bu_mu("is") or _bu_mu("<") or _bu_mu(">") or _bu_mu("<=") or _bu_mu(">=") {
+        var op = _ilerle()
+        var isaret = op.tur
+        if isaret is "is" and _bu_mu("not") {
+            _ilerle()
+            isaret = "is not"
+        }
+        var sag = _bit_veya()
+        sol = _d("IkiliIslem", isaret, "", [sol, sag], op)
+    }
+    return sol
+}
+
+# Bit işlemleri (öncelik: | en zayıf, sonra ^, sonra &, sonra << >>; hepsi + ve -'den zayıf)
+fn _bit_veya() -> Dugum {
+    var sol = _bit_xor()
+    repeat while _bu_mu("|") and _tamam() {
+        var op = _ilerle()
+        var sag = _bit_xor()
+        sol = _d("IkiliIslem", op.tur, "", [sol, sag], op)
+    }
+    return sol
+}
+
+fn _bit_xor() -> Dugum {
+    var sol = _bit_ve()
+    repeat while _bu_mu("^") and _tamam() {
+        var op = _ilerle()
+        var sag = _bit_ve()
+        sol = _d("IkiliIslem", op.tur, "", [sol, sag], op)
+    }
+    return sol
+}
+
+fn _bit_ve() -> Dugum {
+    var sol = _kaydirma()
+    repeat while _bu_mu("&") and _tamam() {
+        var op = _ilerle()
+        var sag = _kaydirma()
+        sol = _d("IkiliIslem", op.tur, "", [sol, sag], op)
+    }
+    return sol
+}
+
+fn _kaydirma() -> Dugum {
+    var sol = _toplama()
+    repeat while (_bu_mu("<<") or _bu_mu(">>")) and _tamam() {
+        var op = _ilerle()
+        var sag = _toplama()
+        sol = _d("IkiliIslem", op.tur, "", [sol, sag], op)
+    }
+    return sol
+}
+
+fn _toplama() -> Dugum {
+    var sol = _carpma()
+    repeat while (_bu_mu("+") or _bu_mu("-")) and _tamam() {
+        var op = _ilerle()
+        var sag = _carpma()
+        sol = _d("IkiliIslem", op.tur, "", [sol, sag], op)
+    }
+    return sol
+}
+
+fn _carpma() -> Dugum {
+    var sol = _tekli()
+    repeat while (_bu_mu("*") or _bu_mu("/") or _bu_mu("//") or _bu_mu("%")) and _tamam() {
+        var op = _ilerle()
+        var sag = _tekli()
+        sol = _d("IkiliIslem", op.tur, "", [sol, sag], op)
+    }
+    return sol
+}
+
+fn _tekli() -> Dugum {
+    if _bu_mu("-") {
+        var op = _ilerle()
+        return _d("TekliIslem", "-", "", [_tekli()], op)
+    }
+    return _sonek(_birincil())
+}
+
+# Bir değerin arkasından gelen [ ] ve . işlemleri:  liste[2]  liste.length  liste.add(5)
+fn _sonek(ilk: Dugum) -> Dugum {
+    var e = ilk
+    repeat while _tamam() {
+        if _bu_mu("[") {
+            var ac = _ilerle()
+            var sira = _ifade()
+            if _baglamsal_mi("to") {                     # metin[2 to 4]
+                var to = _ilerle()
+                sira = _d("Aralik", "", "", [sira, _ifade()], to)
+            }
+            _bekle("]", dil.sec("elemanın sırasını kapatan ']'", "']' to close the item's position"))
+            e = _d("Erisim", "", "", [e, sira], ac)
+        } else if _bu_mu(".") {
+            var nokta = _ilerle()
+            var ad = _bekle("İSİM", dil.sec("noktadan sonra bir ad (ör: length, add)", "a name after the dot (e.g. length, add)")).deger
+            if _bu_mu("(") {
+                _ilerle()
+                var argumanlar: [Dugum] = []
+                var yedek = _bos()
+                var isimli: [Dugum] = []
+                _satir_sonlarini_atla()
+                repeat while not _bu_mu(")") and _tamam() {
+                    if _bu_mu("else") and _sonraki().tur is ":" {         # sozluk.get(k, else: 0)
+                        _ilerle()
+                        _ilerle()
+                        yedek = _ifade()
+                    } else if _bu_mu("İSİM") and _sonraki().tur is ":" {  # Odeme.Kart(no: "1234")
+                        var at = _ilerle()
+                        _ilerle()
+                        isimli.add(_d("Isimli", at.deger, "", [_ifade()], at))
+                    } else {
+                        argumanlar.add(_ifade())
+                    }
+                    _satir_sonlarini_atla()
+                    if not _bu_mu(")") {
+                        _bekle(",", dil.sec("değerleri ayıran ',' ya da kapatan ')'", "',' between values or ')' to close them"))
+                        _satir_sonlarini_atla()
+                    }
+                }
+                _ilerle()                    # ')'
+                e = _d("MetotCagrisi", ad, "", [e, _liste(argumanlar), yedek, _liste(isimli)], nokta)
+            } else {
+                e = _d("Ozellik", ad, "", [e], nokta)
+            }
+        } else {
+            return e
+        }
+    }
+    return e
+}
+
+# "channel[ ... ](" mı? (channel bir liste değişkeninin adı da olabilir: channel[1])
+fn _kanal_mi() -> bool {
+    if _sonraki().tur is not "[" {
+        return false
+    }
+    var derinlik = 0
+    var i = KONUM + 1
+    repeat while i <= TOKENLAR.length {
+        var tur = TOKENLAR[i].tur
+        if tur is "[" {
+            derinlik = derinlik + 1
+        } else if tur is "]" {
+            derinlik = derinlik - 1
+            if derinlik is 0 {
+                return i + 1 <= TOKENLAR.length and TOKENLAR[i + 1].tur is "("
+            }
+        } else if tur is "SON" {
+            return false
+        }
+        i = i + 1
+    }
+    return false
+}
+
+# "start ad(" ya da "start modul.ad(" mı? (start bir değişken adı da olabilir: content[start to i])
+fn _baslat_mi() -> bool {
+    if _sonraki().tur is not "İSİM" or KONUM + 2 > TOKENLAR.length {
+        return false
+    }
+    var u = TOKENLAR[KONUM + 2].tur
+    return u is "(" or u is "."
+}
+
+fn _birincil() -> Dugum {
+    var t = _simdiki()
+    if t.tur is "SAYI" {
+        _ilerle()
+        return _d("Sayi", t.deger, "", [], t)
+    }
+    if t.tur is "ONDALIK" {
+        _ilerle()
+        return _d("Ondalik", t.deger, "", [], t)
+    }
+    if t.tur is "measure" {                              # measure { ... }
+        _ilerle()
+        return _d("Olcum", "", "", [_liste(_blok())], t)
+    }
+    if t.tur is "true" or t.tur is "false" {
+        _ilerle()
+        return _d("Mantiksal", t.tur, "", [], t)
+    }
+    if t.tur is "none" {
+        _ilerle()
+        return _d("Yok", "", "", [], t)
+    }
+    if t.tur is "METİN" {
+        _ilerle()
+        return _d("Metin", t.deger, "", [], t)
+    }
+    if t.tur is "İSİM" and t.deger is "channel" and _kanal_mi() {     # channel[text](): yeni kanal
+        _ilerle()
+        _ilerle()                                        # [
+        var tip = _tip()
+        _bekle("]", dil.sec("kanal tipini kapatan ']' (ör: channel[text]())", "']' to close the channel type (e.g. channel[text]())"))
+        _bekle("(", dil.sec("'(' (yeni kanal: channel[text]())", "'(' (new channel: channel[text]())"))
+        _bekle(")", dil.sec("')' (yeni kanal: channel[text]())", "')' (new channel: channel[text]())"))
+        return _d("KanalYeni", "", "", [tip], t)
+    }
+    if t.tur is "fn" and _sonraki().tur is "(" {          # fn(a, b) => a + b: lambda
+        return _lambda()
+    }
+    if t.tur is "İSİM" and t.deger is "try" and _baslat_mi() {       # try oku(yol): hata olursa yakala ya da yukarı ilet
+        _ilerle()
+        return _d("Dene", "", "", [_sonek(_birincil())], t)
+    }
+    if t.tur is "İSİM" and t.deger is "start" and _baslat_mi() {     # start indir(url): arka planda iş
+        _ilerle()
+        return _d("Baslat", "", "", [_sonek(_birincil())], t)
+    }
+    if t.tur is "İSİM" {
+        _ilerle()
+        if _bu_mu("(") {                                 # isim( → fonksiyon çağrısı / tip oluşturma
+            _ilerle()
+            var argumanlar: [Dugum] = []
+            var isimli: [Dugum] = []
+            _satir_sonlarini_atla()
+            repeat while not _bu_mu(")") and _tamam() {
+                if (_bu_mu("İSİM") or _bu_mu("else")) and _sonraki().tur is ":" {   # ad: "Ali"  /  else: 0
+                    var at = _ilerle()
+                    _ilerle()                            # ':'
+                    var isim = "else"
+                    if at.tur is "İSİM" {
+                        isim = at.deger
+                    }
+                    isimli.add(_d("Isimli", isim, "", [_ifade()], at))
+                } else {
+                    var arg = _ifade()
+                    if _baglamsal_mi("to") {             # random(1 to 6)
+                        var to = _ilerle()
+                        arg = _d("Aralik", "", "", [arg, _ifade()], to)
+                    }
+                    argumanlar.add(arg)
+                }
+                _satir_sonlarini_atla()
+                if not _bu_mu(")") {
+                    _bekle(",", dil.sec("değerleri ayıran ',' ya da kapatan ')'", "',' between values or ')' to close them"))
+                    _satir_sonlarini_atla()
+                }
+            }
+            _ilerle()                                    # ')'
+            return _d("Cagri", t.deger, "", [_liste(argumanlar), _liste(isimli)], t)
+        }
+        return _d("Isim", t.deger, "", [], t)
+    }
+    if t.tur is "(" {
+        _ilerle()
+        var ic = _ifade()
+        _bekle(")", dil.sec("parantezi kapatan ')'", "')' to close the parenthesis"))
+        return ic                                        # parantezin kendisi ağaçta yer almaz
+    }
+    if t.tur is "[" {
+        _ilerle()
+        var elemanlar: [Dugum] = []
+        _satir_sonlarini_atla()
+        repeat while not _bu_mu("]") and _tamam() {
+            elemanlar.add(_ifade())
+            _satir_sonlarini_atla()
+            if not _bu_mu("]") {
+                _bekle(",", dil.sec("elemanları ayıran ',' ya da kapatan ']'", "',' between items or ']' to close them"))
+                _satir_sonlarini_atla()
+            }
+        }
+        _ilerle()
+        return _d("Liste", "", "", elemanlar, t)
+    }
+    if t.tur is "\{" {                                   # {"Ali": 90, "Ayşe": 85}
+        _ilerle()
+        var anahtarlar: [Dugum] = []
+        var degerler: [Dugum] = []
+        _satir_sonlarini_atla()
+        repeat while not _bu_mu("\}") and _tamam() {
+            anahtarlar.add(_ifade())
+            if anahtarlar.length is 1 and _bu_mu("\}") {
+                # {fiyat * 2} → büyük ihtimalle metnin dışında { } kullanıldı
+                _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: Süslü parantez \{ \} sadece tırnak içindeki yazılarda, bir değeri yazının içine koymak için kullanılır:   print(\"Toplam: \{fiyat * 2\}\")\n   Yazının dışında parantezsiz yaz:   var toplam = fiyat * 2", "Line {t.satir}, column {t.sutun}: Curly braces \{ \} are only used inside quoted text, to put a value into the text:   print(\"Total: \{price * 2\}\")\n   Outside text, write it without braces:   var total = price * 2"))
+                return _bos()
+            }
+            _bekle(":", dil.sec("anahtarı değerinden ayıran ':' (ör: \{\"Ali\": 90\})", "':' between a key and its value (e.g. \{\"Ali\": 90\})"))
+            degerler.add(_ifade())
+            _satir_sonlarini_atla()
+            if not _bu_mu("\}") {
+                _bekle(",", dil.sec("çiftleri ayıran ',' ya da kapatan '\}'", "',' between pairs or '\}' to close them"))
+                _satir_sonlarini_atla()
+            }
+        }
+        _ilerle()
+        return _d("SozlukDegeri", "", "", [_liste(anahtarlar), _liste(degerler)], t)
+    }
+    _hata(dil.sec("Satır {t.satir}, sütun {t.sutun}: Burada bir değer bekliyordum (sayı, metin, değişken...), ama {_token_adi(t)} geldi.", "Line {t.satir}, column {t.sutun}: Expected a value here (number, text, variable...), but found {_token_adi(t)}."))
+    return _bos()
+}

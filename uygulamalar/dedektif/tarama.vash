@@ -1,0 +1,380 @@
+# tarama: bir sürücüyü (ya da klasörü) çok çekirdekle tarar
+#   var t = tarama.tara("C:\\", ilerleme_kanali)      → tarama.Tarama
+import fs
+
+# Bir klasör (düz liste; 'ust' üst klasörün sırası, kökte 0)
+type Kayit {
+    ad: text
+    ust: int = 0
+    boyut: int = 0                  # içindeki her şey (hesaplandıktan sonra)
+    dosya: int = 0
+    unity: bool = false             # Assets + ProjectSettings var: Unity projesi
+    ana: int = 0                    # işçide: bu alt ağacın ana listedeki üstü
+}
+
+type Dosya {
+    yol: text
+    boyut: int
+    zaman: int = 0
+}
+
+type Tarama {
+    klasorler: [Kayit] = []
+    buyukler: [Dosya] = []          # 50 MB'tan büyük dosyalar
+    esler: [Dosya] = []             # 5 MB'tan büyük dosyalar (kopya adayları)
+    dosya_sayisi: int = 0
+    sure: float = 0.0
+    kok: text = ""
+}
+
+global var BUYUK = 52428800
+global var ES = 5242880
+
+fn yolu(klasorler: [Kayit], i: int) -> text {
+    var parcalar: [text] = []
+    var k = i
+    repeat while k > 0 {
+        parcalar.add(klasorler[k].ad)
+        k = klasorler[k].ust
+    }
+    var ters: [text] = []
+    repeat j from parcalar.length to 1 step -1 {
+        ters.add(parcalar[j])
+    }
+    var y = ters[1]
+    repeat j from 2 to ters.length {
+        y = fs.join(y, ters[j])
+    }
+    return y
+}
+
+# İşçi: kanaldan "sıra|yol" alıp o alt ağacı tamamen tarar
+fn isci(isler: channel[text], ilerleme: channel[int]) -> Tarama {
+    use files
+    var t = Tarama()
+    var gelen = isler.receive()
+    repeat while gelen is not none {
+        var is_ = gelen
+        var ayrac = is_.split("|")
+        var ana = int(ayrac[1], else: 0)
+        var kok_yol = is_[ayrac[1].length + 2 to is_.length]
+        # alt ağaç: yığınla (önce üst, sonra alt klasörler eklenir)
+        t.klasorler.add(Kayit(ad: kok_yol, ust: 0, ana: ana))
+        var yigin: [int] = [t.klasorler.length]
+        var yollar: [text] = [kok_yol]
+        var sayac = 0
+        repeat while yigin.length > 0 {
+            var i = yigin[yigin.length]
+            var yol = yollar[yollar.length]
+            yigin.remove(yigin.length)
+            yollar.remove(yollar.length)
+            var l = fs.list(yol)
+            var boyut = 0
+            var dosya = 0
+            var assets = false
+            var ayarlar = false
+            var paketler = false
+            repeat k from 1 to l.length {
+                var e = l[k]
+                if e.is_dir {
+                    t.klasorler.add(Kayit(ad: e.name, ust: i))
+                    yigin.add(t.klasorler.length)
+                    yollar.add(fs.join(yol, e.name))
+                    if e.name is "Assets" {
+                        assets = true
+                    }
+                    if e.name is "ProjectSettings" {
+                        ayarlar = true
+                    }
+                    if e.name is "Packages" {
+                        paketler = true
+                    }
+                } else if not e.is_link {
+                    boyut = boyut + e.size
+                    dosya = dosya + 1
+                    if e.size >= ES {
+                        var d = Dosya(yol: fs.join(yol, e.name), boyut: e.size, zaman: e.modified)
+                        t.esler.add(d)
+                        if e.size >= BUYUK {
+                            t.buyukler.add(d)
+                        }
+                    }
+                }
+            }
+            t.klasorler[i].boyut = boyut
+            t.klasorler[i].dosya = dosya
+            t.klasorler[i].unity = assets and ayarlar and paketler
+            t.dosya_sayisi = t.dosya_sayisi + dosya
+            sayac = sayac + dosya
+            if sayac > 2000 {
+                ilerleme.send(sayac)
+                sayac = 0
+            }
+        }
+        ilerleme.send(sayac)
+        gelen = isler.receive()
+    }
+    return t
+}
+
+# Bütün tarama (arka planda çalıştırılır)
+fn tara(kok: text, ilerleme: channel[int], iscisi: int) -> Tarama {
+    use files
+    var basla = time()
+    var t = Tarama(kok: kok)
+    t.klasorler.add(Kayit(ad: kok, ust: 0))
+    # ilk iki kat burada: işler ikinci kattaki klasörler
+    var isler = channel[text]()
+    var kat1 = fs.list(kok)
+    var is_sayisi = 0
+    repeat a from 1 to kat1.length {
+        var e = kat1[a]
+        if e.is_dir {
+            t.klasorler.add(Kayit(ad: e.name, ust: 1))
+            var i1 = t.klasorler.length
+            var yol1 = fs.join(kok, e.name)
+            var kat2 = fs.list(yol1)
+            var boyut = 0
+            var dosya = 0
+            var assets = false
+            var ayarlar = false
+            var paketler = false
+            repeat b from 1 to kat2.length {
+                var f = kat2[b]
+                if f.is_dir {
+                    t.klasorler.add(Kayit(ad: f.name, ust: i1))
+                    isler.send("{t.klasorler.length}|{fs.join(yol1, f.name)}")
+                    is_sayisi = is_sayisi + 1
+                    if f.name is "Assets" {
+                        assets = true
+                    }
+                    if f.name is "ProjectSettings" {
+                        ayarlar = true
+                    }
+                    if f.name is "Packages" {
+                        paketler = true
+                    }
+                } else if not f.is_link {
+                    boyut = boyut + f.size
+                    dosya = dosya + 1
+                    if f.size >= ES {
+                        t.esler.add(Dosya(yol: fs.join(yol1, f.name), boyut: f.size, zaman: f.modified))
+                        if f.size >= BUYUK {
+                            t.buyukler.add(Dosya(yol: fs.join(yol1, f.name), boyut: f.size, zaman: f.modified))
+                        }
+                    }
+                }
+            }
+            t.klasorler[i1].boyut = boyut
+            t.klasorler[i1].dosya = dosya
+            t.klasorler[i1].unity = assets and ayarlar and paketler
+            t.dosya_sayisi = t.dosya_sayisi + dosya
+        } else if not e.is_link {
+            t.klasorler[1].boyut = t.klasorler[1].boyut + e.size
+            t.klasorler[1].dosya = t.klasorler[1].dosya + 1
+            t.dosya_sayisi = t.dosya_sayisi + 1
+        }
+    }
+    isler.close()
+    var isciler: [task[Tarama]] = []
+    repeat k from 1 to iscisi {
+        isciler.add(start isci(isler, ilerleme))
+    }
+    repeat k from 1 to isciler.length {
+        var p = isciler[k].wait()
+        var kayma = t.klasorler.length
+        repeat j from 1 to p.klasorler.length {
+            var c = p.klasorler[j]
+            if c.ust is 0 {
+                # alt ağacın kökü: ana listede zaten var (ikinci kat); onu güncelle, çocukları ona bağla
+                c.ust = -c.ana
+            } else {
+                c.ust = c.ust + kayma
+            }
+            t.klasorler.add(c)
+        }
+        repeat j from 1 to p.buyukler.length {
+            t.buyukler.add(p.buyukler[j])
+        }
+        repeat j from 1 to p.esler.length {
+            t.esler.add(p.esler[j])
+        }
+        t.dosya_sayisi = t.dosya_sayisi + p.dosya_sayisi
+    }
+    # alt ağaç kökleri: ikinci kattaki kayda karışsın (yerine geçsin)
+    var yeni_sira: [int] = []
+    repeat j from 1 to t.klasorler.length {
+        yeni_sira.add(j)
+    }
+    repeat j from 1 to t.klasorler.length {
+        var c = t.klasorler[j]
+        if c.ust < 0 {
+            var hedef = -c.ust
+            t.klasorler[hedef].boyut = c.boyut
+            t.klasorler[hedef].dosya = c.dosya
+            t.klasorler[hedef].unity = c.unity
+            yeni_sira[j] = hedef
+            t.klasorler[j].ust = -1                  # artık kullanılmıyor
+            t.klasorler[j].boyut = 0
+            t.klasorler[j].dosya = 0
+            t.klasorler[j].unity = false
+        }
+    }
+    # çocukları, yerine geçilen köke bağla
+    repeat j from 1 to t.klasorler.length {
+        var u = t.klasorler[j].ust
+        if u > 0 and yeni_sira[u] is not u {
+            t.klasorler[j].ust = yeni_sira[u]
+        }
+    }
+    # boyutları yukarı topla (çocuk her zaman üstünden sonra gelir)
+    repeat j from t.klasorler.length to 2 step -1 {
+        var u = t.klasorler[j].ust
+        if u > 0 {
+            t.klasorler[u].boyut = t.klasorler[u].boyut + t.klasorler[j].boyut
+            t.klasorler[u].dosya = t.klasorler[u].dosya + t.klasorler[j].dosya
+        }
+    }
+    t.buyukler.sort(by: fn(a, b) => a.boyut > b.boyut)
+    if t.buyukler.length > 300 {
+        var ilk: [Dosya] = []
+        repeat j from 1 to 300 {
+            ilk.add(t.buyukler[j])
+        }
+        t.buyukler = ilk
+    }
+    t.sure = time() - basla
+    return t
+}
+
+# Klasörün doğrudan alt klasörleri (sıra numaraları), büyükten küçüğe
+fn cocuklari(t: Tarama, i: int) -> [int] {
+    var sonuc: [int] = []
+    repeat j from 1 to t.klasorler.length {
+        if t.klasorler[j].ust is i and j is not i {
+            sonuc.add(j)
+        }
+    }
+    var l = t.klasorler
+    sonuc.sort(by: fn(a, b) => l[a].boyut > l[b].boyut)
+    return sonuc
+}
+
+# İşçi: verilen dosyaların tam parmak izleri (aynı sırayla)
+fn izleri_al(yollar: [text], ilerleme: channel[int]) -> [text] {
+    use files
+    var sonuc: [text] = []
+    repeat i from 1 to yollar.length {
+        sonuc.add(fs.hash(yollar[i]))
+        ilerleme.send(1)
+    }
+    return sonuc
+}
+
+# Kopyalar: aynı boyut → aynı hızlı iz (baş+son) → aynı tam iz (çok çekirdekte) → gruplar
+fn kopyalari_bul(esler: [Dosya], ilerleme: channel[int], iscisi: int) -> [[Dosya]] {
+    use files
+    var boyuta_gore: {int: [int]} = {}
+    repeat i from 1 to esler.length {
+        var b = esler[i].boyut
+        if boyuta_gore.has(b) {
+            boyuta_gore[b].add(i)
+        } else {
+            boyuta_gore[b] = [i]
+        }
+    }
+    # 1. adım: hızlı iz
+    var adaylar: [int] = []
+    var on_anahtar: [text] = []
+    var boyutlar = boyuta_gore.keys()
+    repeat k from 1 to boyutlar.length {
+        var grup = boyuta_gore[boyutlar[k]]
+        if grup.length >= 2 {
+            var hizli: {text: [int]} = {}
+            repeat a from 1 to grup.length {
+                var iz = fs.quick_hash(esler[grup[a]].yol)
+                if iz.length > 0 {
+                    var anahtar = "{boyutlar[k]}:{iz}"
+                    if hizli.has(anahtar) {
+                        hizli[anahtar].add(grup[a])
+                    } else {
+                        hizli[anahtar] = [grup[a]]
+                    }
+                }
+            }
+            var ha = hizli.keys()
+            repeat a from 1 to ha.length {
+                if hizli[ha[a]].length >= 2 {
+                    repeat b from 1 to hizli[ha[a]].length {
+                        adaylar.add(hizli[ha[a]][b])
+                        on_anahtar.add(ha[a])
+                    }
+                } else {
+                    ilerleme.send(1)
+                }
+            }
+        }
+    }
+    # 2. adım: kalanların tam izi, işçilere bölünmüş
+    var paylar: [[text]] = []
+    var payda_sira: [[int]] = []
+    repeat k from 1 to iscisi {
+        paylar.add([])
+        payda_sira.add([])
+    }
+    repeat i from 1 to adaylar.length {
+        var k = (i - 1) % iscisi + 1
+        paylar[k].add(esler[adaylar[i]].yol)
+        payda_sira[k].add(i)
+    }
+    var isler: [task[[text]]] = []
+    repeat k from 1 to iscisi {
+        isler.add(start izleri_al(paylar[k], ilerleme))
+    }
+    var tam: [text] = []
+    repeat i from 1 to adaylar.length {
+        tam.add("")
+    }
+    repeat k from 1 to isler.length {
+        var izler = isler[k].wait()
+        repeat j from 1 to izler.length {
+            tam[payda_sira[k][j]] = izler[j]
+        }
+    }
+    var gruplar_sozluk: {text: [Dosya]} = {}
+    repeat i from 1 to adaylar.length {
+        if tam[i].length > 0 {
+            var anahtar = "{on_anahtar[i]}:{tam[i]}"
+            if gruplar_sozluk.has(anahtar) {
+                gruplar_sozluk[anahtar].add(esler[adaylar[i]])
+            } else {
+                gruplar_sozluk[anahtar] = [esler[adaylar[i]]]
+            }
+        }
+    }
+    var gruplar: [[Dosya]] = []
+    var ga = gruplar_sozluk.keys()
+    repeat i from 1 to ga.length {
+        if gruplar_sozluk[ga[i]].length >= 2 {
+            gruplar.add(gruplar_sozluk[ga[i]])
+        }
+    }
+    gruplar.sort(by: fn(a, b) => a[1].boyut * (a.length - 1) > b[1].boyut * (b.length - 1))
+    return gruplar
+}
+
+# Kaç kopya adayı parmak izi alınacak (ilerleme çubuğu için)
+fn kopya_aday_sayisi(esler: [Dosya]) -> int {
+    var sayac: {int: int} = {}
+    repeat i from 1 to esler.length {
+        sayac[esler[i].boyut] = sayac.get(esler[i].boyut, else: 0) + 1
+    }
+    var n = 0
+    var v = sayac.values()
+    repeat i from 1 to v.length {
+        if v[i] >= 2 {
+            n = n + v[i]
+        }
+    }
+    return n
+}

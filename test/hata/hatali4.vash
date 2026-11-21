@@ -1,0 +1,7 @@
+fn bol(a: int, b: int) -> int fails {
+    if b is 0 { fail "sıfır" }
+    return a // b
+}
+parallel repeat i from 1 to 10 {
+    var x = try bol(1, i)
+}

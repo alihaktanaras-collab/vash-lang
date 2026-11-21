@@ -1,0 +1,1847 @@
+{
+  "title": "Altın Avcısı",
+  "view_width": 960,
+  "view_height": 540,
+  "world_width": 3840,
+  "world_height": 540,
+  "sky_top": "#3b8fd9",
+  "sky_bottom": "#bfe9ff",
+  "gravity": 1700,
+  "pixel_scale": 3,
+  "layers": [
+    {
+      "image": "resimler/bulutlar.png",
+      "speed": 0.12,
+      "y": 30
+    },
+    {
+      "image": "resimler/daglar.png",
+      "speed": 0.25,
+      "y": 330
+    },
+    {
+      "image": "resimler/tepeler.png",
+      "speed": 0.5,
+      "y": 372
+    }
+  ],
+  "things": [
+    {
+      "name": "Zemin 1",
+      "kind": "image",
+      "x": 0,
+      "y": 444,
+      "width": 864,
+      "height": 156,
+      "color": "#ffffff",
+      "image": "resimler/zemin.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Zemin 2",
+      "kind": "image",
+      "x": 1008,
+      "y": 444,
+      "width": 480,
+      "height": 156,
+      "color": "#ffffff",
+      "image": "resimler/zemin.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Zemin 3",
+      "kind": "image",
+      "x": 1632,
+      "y": 444,
+      "width": 288,
+      "height": 156,
+      "color": "#ffffff",
+      "image": "resimler/zemin.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Zemin 4",
+      "kind": "image",
+      "x": 2064,
+      "y": 444,
+      "width": 672,
+      "height": 156,
+      "color": "#ffffff",
+      "image": "resimler/zemin.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Zemin 5",
+      "kind": "image",
+      "x": 2880,
+      "y": 444,
+      "width": 960,
+      "height": 156,
+      "color": "#ffffff",
+      "image": "resimler/zemin.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 1",
+      "kind": "image",
+      "x": 336,
+      "y": 300,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 2",
+      "kind": "image",
+      "x": 576,
+      "y": 204,
+      "width": 192,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 3",
+      "kind": "image",
+      "x": 864,
+      "y": 300,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 4",
+      "kind": "image",
+      "x": 1200,
+      "y": 252,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 5",
+      "kind": "image",
+      "x": 1488,
+      "y": 156,
+      "width": 96,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 6",
+      "kind": "image",
+      "x": 1728,
+      "y": 252,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 7",
+      "kind": "image",
+      "x": 2256,
+      "y": 300,
+      "width": 192,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 8",
+      "kind": "image",
+      "x": 2496,
+      "y": 204,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 9",
+      "kind": "image",
+      "x": 3072,
+      "y": 300,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Platform 10",
+      "kind": "image",
+      "x": 3312,
+      "y": 204,
+      "width": 144,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/tas.png",
+      "frames": 2,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 0,
+      "solid": true,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Altın 1",
+      "kind": "image",
+      "x": 198,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 2",
+      "kind": "image",
+      "x": 246,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 3",
+      "kind": "image",
+      "x": 294,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 4",
+      "kind": "image",
+      "x": 390,
+      "y": 258,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 5",
+      "kind": "image",
+      "x": 630,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 6",
+      "kind": "image",
+      "x": 678,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 7",
+      "kind": "image",
+      "x": 726,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 8",
+      "kind": "image",
+      "x": 918,
+      "y": 258,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 9",
+      "kind": "image",
+      "x": 1062,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 10",
+      "kind": "image",
+      "x": 1110,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 11",
+      "kind": "image",
+      "x": 1158,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 12",
+      "kind": "image",
+      "x": 1254,
+      "y": 210,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 13",
+      "kind": "image",
+      "x": 1494,
+      "y": 114,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 14",
+      "kind": "image",
+      "x": 1542,
+      "y": 114,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 15",
+      "kind": "image",
+      "x": 1782,
+      "y": 210,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 16",
+      "kind": "image",
+      "x": 1830,
+      "y": 210,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 17",
+      "kind": "image",
+      "x": 2118,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 18",
+      "kind": "image",
+      "x": 2166,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 19",
+      "kind": "image",
+      "x": 2310,
+      "y": 258,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 20",
+      "kind": "image",
+      "x": 2358,
+      "y": 258,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 21",
+      "kind": "image",
+      "x": 2550,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 22",
+      "kind": "image",
+      "x": 2598,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 23",
+      "kind": "image",
+      "x": 2790,
+      "y": 306,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 24",
+      "kind": "image",
+      "x": 2982,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 25",
+      "kind": "image",
+      "x": 3126,
+      "y": 258,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 26",
+      "kind": "image",
+      "x": 3366,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 27",
+      "kind": "image",
+      "x": 3414,
+      "y": 162,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 28",
+      "kind": "image",
+      "x": 3558,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Altın 29",
+      "kind": "image",
+      "x": 3606,
+      "y": 402,
+      "width": 36,
+      "height": 36,
+      "color": "#ffffff",
+      "image": "resimler/altin.png",
+      "frames": 6,
+      "frame_speed": 10,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 2,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "collect",
+          "speed": 0,
+          "power": 10,
+          "value": "",
+          "sound": "sesler/altin.wav"
+        },
+        {
+          "kind": "float",
+          "speed": 3,
+          "power": 5,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Sümük 1",
+      "kind": "image",
+      "x": 480,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 5,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 70,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 50,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    },
+    {
+      "name": "Sümük 2",
+      "kind": "image",
+      "x": 1200,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 5,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 70,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 50,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    },
+    {
+      "name": "Sümük 3",
+      "kind": "image",
+      "x": 2208,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 5,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 70,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 50,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    },
+    {
+      "name": "Sümük 4",
+      "kind": "image",
+      "x": 2640,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 5,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 70,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 50,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    },
+    {
+      "name": "Sümük 5",
+      "kind": "image",
+      "x": 3168,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 5,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 70,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 50,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    },
+    {
+      "name": "Sümük 6",
+      "kind": "image",
+      "x": 3456,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 5,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 70,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 50,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    },
+    {
+      "name": "Diken 1",
+      "kind": "image",
+      "x": 768,
+      "y": 417,
+      "width": 96,
+      "height": 27,
+      "color": "#ffffff",
+      "image": "resimler/diken.png",
+      "frames": 1,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 1,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "danger",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": "sesler/ah.wav"
+        }
+      ]
+    },
+    {
+      "name": "Diken 2",
+      "kind": "image",
+      "x": 1872,
+      "y": 417,
+      "width": 48,
+      "height": 27,
+      "color": "#ffffff",
+      "image": "resimler/diken.png",
+      "frames": 1,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 1,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "danger",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": "sesler/ah.wav"
+        }
+      ]
+    },
+    {
+      "name": "Diken 3",
+      "kind": "image",
+      "x": 2400,
+      "y": 417,
+      "width": 96,
+      "height": 27,
+      "color": "#ffffff",
+      "image": "resimler/diken.png",
+      "frames": 1,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 1,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "danger",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": "sesler/ah.wav"
+        }
+      ]
+    },
+    {
+      "name": "Diken 4",
+      "kind": "image",
+      "x": 3024,
+      "y": 417,
+      "width": 48,
+      "height": 27,
+      "color": "#ffffff",
+      "image": "resimler/diken.png",
+      "frames": 1,
+      "frame_speed": 8,
+      "tiled": true,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 1,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "danger",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": "sesler/ah.wav"
+        }
+      ]
+    },
+    {
+      "name": "Bayrak",
+      "kind": "image",
+      "x": 3696,
+      "y": 348,
+      "width": 48,
+      "height": 96,
+      "color": "#ffffff",
+      "image": "resimler/bayrak.png",
+      "frames": 3,
+      "frame_speed": 6,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 1,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "goal",
+          "speed": 0,
+          "power": 0,
+          "value": "Tebrikler, bitirdin!",
+          "sound": "sesler/kazandin.wav"
+        }
+      ]
+    },
+    {
+      "name": "Oyuncu",
+      "kind": "image",
+      "x": 96,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#ffffff",
+      "image": "resimler/oyuncu.png",
+      "frames": 6,
+      "frame_speed": 12,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 5,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "platformer",
+          "speed": 270,
+          "power": 800,
+          "value": "",
+          "sound": ""
+        }
+      ]
+    },
+    {
+      "name": "Puan yazısı",
+      "kind": "text",
+      "x": 24,
+      "y": 14,
+      "width": 240,
+      "height": 40,
+      "color": "#ffe9a8",
+      "image": "",
+      "frames": 1,
+      "frame_speed": 8,
+      "tiled": false,
+      "label": "Altın: {score}",
+      "text_size": 34,
+      "on_screen": true,
+      "layer": 10,
+      "solid": false,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "İpucu",
+      "kind": "text",
+      "x": 24,
+      "y": 500,
+      "width": 420,
+      "height": 28,
+      "color": "#ffffff",
+      "image": "",
+      "frames": 1,
+      "frame_speed": 8,
+      "tiled": false,
+      "label": "← → yürü   ·   Boşluk zıpla   ·   Düşmanların üstüne bas",
+      "text_size": 20,
+      "on_screen": true,
+      "layer": 10,
+      "solid": false,
+      "hidden": false,
+      "behaviors": []
+    },
+    {
+      "name": "Kurbağa",
+      "kind": "image",
+      "x": 336,
+      "y": 396,
+      "width": 48,
+      "height": 48,
+      "color": "#a7f070",
+      "image": "resimler/sumuk.png",
+      "frames": 3,
+      "frame_speed": 8,
+      "tiled": false,
+      "label": "",
+      "text_size": 28,
+      "on_screen": false,
+      "layer": 3,
+      "solid": false,
+      "hidden": false,
+      "behaviors": [
+        {
+          "kind": "gravity",
+          "speed": 0,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "patrol",
+          "speed": 120,
+          "power": 0,
+          "value": "",
+          "sound": ""
+        },
+        {
+          "kind": "enemy",
+          "speed": 0,
+          "power": 100,
+          "value": "sesler/ah.wav",
+          "sound": "sesler/ezme.wav"
+        }
+      ]
+    }
+  ]
+}

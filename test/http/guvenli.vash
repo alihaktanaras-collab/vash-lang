@@ -1,0 +1,27 @@
+# HTTPS (deneme sertifikası) ve düz HTTP sunucusu: kalıcı bağlantı denemesi
+import http
+
+var duz = http.listen(8093) else: http.Server(id: 0, port: 0)
+var guvenli = http.listen_secure(8443, "", "") else: http.Server(id: 0, port: 0)
+if guvenli.id is 0 {
+    print("HTTPS açılamadı:", http.error())
+}
+print("hazır")
+var sayi = 0
+var calisiyor = true
+repeat while calisiyor {
+    var sunuculardan = [duz, guvenli]
+    repeat i from 1 to 2 {
+        var istek = sunuculardan[i].next_within(20)
+        if istek is not none {
+            sayi = sayi + 1
+            if istek.path is "/kapat" {
+                istek.reply(200, "bitti")
+                calisiyor = false
+            } else {
+                istek.reply(200, "\{\"sunucu\": {i}, \"istek\": {sayi}, \"govde\": \"{istek.body}\"\}")
+            }
+        }
+    }
+}
+print("toplam istek:", sayi)

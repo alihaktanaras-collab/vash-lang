@@ -1,0 +1,8 @@
+var ayar = 5
+fn oku() -> int {
+    use ayar
+    return ayar * 2
+}
+var x = start oku()
+ayar = 6
+print(x.wait())

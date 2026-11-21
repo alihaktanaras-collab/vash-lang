@@ -1,0 +1,22 @@
+# Mandelbrot: 2000x2000 noktada kaç tanesi kümede
+var boy = 2000
+var icerde = 0
+repeat y from 0 to boy - 1 {
+    repeat x from 0 to boy - 1 {
+        var cr = 3.0 * x / boy - 2.0
+        var ci = 2.0 * y / boy - 1.0
+        var zr = 0.0
+        var zi = 0.0
+        var k = 0
+        repeat while k < 100 and zr * zr + zi * zi <= 4.0 {
+            var t = zr * zr - zi * zi + cr
+            zi = 2.0 * zr * zi + ci
+            zr = t
+            k = k + 1
+        }
+        if k is 100 {
+            icerde = icerde + 1
+        }
+    }
+}
+print(icerde)

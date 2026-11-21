@@ -1,0 +1,86 @@
+# İç içe değiştirme
+type Ogrenci {
+    ad: text
+    notlar: [int] = []
+
+    fn change not_ekle(n: int) {
+        notlar.add(n)
+    }
+}
+
+type Sinif {
+    ad: text
+    ogrenciler: [Ogrenci] = []
+    ogretmen: Ogrenci
+}
+
+var sinif = Sinif(ad: "5-A", ogretmen: Ogrenci(ad: "Ayşe Hoca"))
+sinif.ogrenciler.add(Ogrenci(ad: "Ali"))
+sinif.ogrenciler.add(Ogrenci(ad: "Can"))
+sinif.ogrenciler[1].notlar.add(90)
+sinif.ogrenciler[1].notlar.add(70)
+sinif.ogrenciler[2].not_ekle(55)
+sinif.ogrenciler[2].ad = "Can Demir"
+sinif.ogretmen.ad = "Ayşe Yılmaz"
+sinif.ogrenciler[1].notlar[2] = 75
+print(sinif)
+
+# kopya değişmez (değer anlamı)
+var eski = sinif
+sinif.ogrenciler[1].notlar[1] = 100
+print(eski.ogrenciler[1].notlar, sinif.ogrenciler[1].notlar)
+
+# matris
+var m: [[int]] = [[0, 0, 0], [0, 0, 0]]
+repeat i from 1 to 2 {
+    repeat j from 1 to 3 {
+        m[i][j] = i * 10 + j
+    }
+}
+m[2].add(99)
+print(m)
+
+# sözlük içinde liste
+var gruplar: {text: [text]} = {"meyve": [], "sebze": ["havuç"]}
+gruplar["meyve"].add("elma")
+gruplar["meyve"].add("armut")
+gruplar["sebze"][1] = "patates"
+print(gruplar)
+
+var sayimlar: {text: {text: int}} = {"a": {"x": 1}}
+sayimlar["a"]["y"] = 2
+sayimlar["a"]["x"] = sayimlar["a"]["x"] + 10
+print(sayimlar)
+
+# fonksiyonda use change ile
+fn puanla(i: int, p: int) {
+    use change sinif
+    sinif.ogrenciler[i].notlar.add(p)
+}
+puanla(2, 88)
+print(sinif.ogrenciler[2].notlar)
+
+# when, iç içe değişikliği de görür
+when sinif.ogrenciler.length > 2 {
+    print("sınıf büyüdü")
+}
+sinif.ogrenciler.add(Ogrenci(ad: "Ece"))
+sinif.ogrenciler[3].notlar.sort()
+
+# hız: 1000x1000 matrise yazmak (kopya olmamalı)
+var b: [[int]] = []
+repeat i from 1 to 1000 {
+    var satir: [int] = []
+    repeat j from 1 to 1000 {
+        satir.add(0)
+    }
+    b.add(satir)
+}
+var sure = measure {
+    repeat i from 1 to 1000 {
+        repeat j from 1 to 1000 {
+            b[i][j] = i + j
+        }
+    }
+}
+print(b[1000][1000], sure < 1.0)

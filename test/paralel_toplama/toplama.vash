@@ -1,0 +1,46 @@
+# parallel repeat'te toplama: her çekirdek kendi ara toplamını tutar, sonunda birleştirilir
+var n = 10000000
+var toplam = 0
+var kareler = 0.0
+var eksi = 1000
+parallel repeat i from 1 to n {
+    toplam = toplam + i
+    kareler = kareler + 1.0 / (i * i)
+    eksi = eksi - 1
+}
+print(toplam)
+print(kareler > 1.6449 and kareler < 1.645)
+print(eksi)
+
+var carpim = 1
+parallel repeat i from 1 to 20 {
+    carpim = carpim * i
+}
+print(carpim)
+
+# dizi toplama (histogram): her sayının son basamağını say
+var sayilar: [int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+parallel repeat i from 1 to 1000000 {
+    var k = i % 10 + 1
+    sayilar[k] = sayilar[k] + 1
+}
+print(sayilar)
+
+var agirlik: [float] = [0.0, 0.0]
+parallel repeat i from 1 to 1000 {
+    if i % 2 is 0 {
+        agirlik[1] = agirlik[1] + 0.5
+    } else {
+        agirlik[2] = 2.0 + agirlik[2]
+    }
+}
+print(agirlik)
+
+fn kare_toplami(m: int) -> int {
+    var s = 0
+    parallel repeat i from 1 to m {
+        s = s + i * i
+    }
+    return s
+}
+print(kare_toplami(1000))

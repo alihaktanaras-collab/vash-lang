@@ -1,0 +1,107 @@
+# Kendi tipler: type
+
+# ===== 1) Okul: öğrenci ve notları =====
+type Ogrenci {
+    ad: text
+    notlar: [int] = []
+
+    fn ortalama() -> float {
+        if notlar.length is 0 {
+            return 0.0
+        }
+        var toplam = 0
+        repeat i from 1 to notlar.length {
+            toplam = toplam + notlar[i]
+        }
+        return toplam / notlar.length
+    }
+
+    fn gecti_mi() -> bool {
+        return ortalama() >= 50       # aynı tipin başka metodunu adıyla çağırabilir
+    }
+
+    fn change not_ekle(n: int) {      # nesneyi değiştirir → change
+        notlar.add(n)
+    }
+}
+
+var ali = Ogrenci(ad: "Ali")
+ali.not_ekle(70)
+ali.not_ekle(45)
+ali.not_ekle(90)
+print(ali.ad, "ortalama:", ali.ortalama(), "geçti mi:", ali.gecti_mi())
+print(ali)
+
+# Her değer ayrıdır: kopyayı değiştirmek aslını etkilemez
+var kopya = ali
+kopya.ad = "Ali'nin kopyası"
+kopya.not_ekle(10)
+print("asıl: ", ali.ad, ali.notlar)
+print("kopya:", kopya.ad, kopya.notlar)
+
+# ===== 2) Alışveriş: ürün ve sepet (bir tipin içinde başka tipten liste) =====
+type Urun {
+    ad: text
+    fiyat: float
+    adet: int = 1
+}
+
+type Sepet {
+    urunler: [Urun] = []
+
+    fn change ekle(u: Urun) {
+        urunler.add(u)
+    }
+
+    fn toplam() -> float {
+        var t = 0.0
+        repeat i from 1 to urunler.length {
+            t = t + urunler[i].fiyat * urunler[i].adet
+        }
+        return t
+    }
+}
+
+var sepet = Sepet()
+sepet.ekle(Urun(ad: "Defter", fiyat: 12.5, adet: 3))
+sepet.ekle(Urun(ad: "Kalem", fiyat: 4.75))
+print("Sepet toplamı:", sepet.toplam(), "TL,", sepet.urunler.length, "çeşit ürün")
+
+# ===== 3) Banka: hesap + when ile kural =====
+type Hesap {
+    sahibi: text
+    bakiye: float = 0.0
+
+    fn change yatir(miktar: float) {
+        bakiye = bakiye + miktar
+    }
+    fn change cek(miktar: float) {
+        bakiye = bakiye - miktar
+    }
+}
+
+var hesap = Hesap(sahibi: "Ayşe")
+var kim = hesap.sahibi
+when hesap.bakiye < 0 {
+    print("  ⚠️ Uyarı: {kim} hesabı eksiye düştü!")
+}
+hesap.yatir(100)
+hesap.cek(30)
+hesap.cek(120)              # → when çalışır
+print("Bakiye:", hesap.bakiye)
+
+# ===== 4) Geometri: nokta ve uzaklık =====
+type Nokta {
+    x: float
+    y: float
+}
+
+fn uzaklik_kare(a: Nokta, b: Nokta) -> float {
+    var dx = a.x - b.x
+    var dy = a.y - b.y
+    return dx * dx + dy * dy
+}
+
+var noktalar = [Nokta(x: 0, y: 0), Nokta(x: 3, y: 4), Nokta(x: 6, y: 8)]
+print("1. ile 2. nokta arası (kare):", uzaklik_kare(noktalar[1], noktalar[2]))
+print(noktalar)

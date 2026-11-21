@@ -1,0 +1,2 @@
+var k = channel[text]()
+k.send(5)

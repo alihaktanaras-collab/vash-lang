@@ -1,0 +1,3 @@
+var k = channel[text]()
+k.close()
+k.send("geç")

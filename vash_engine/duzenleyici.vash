@@ -1,0 +1,1705 @@
+# Vash Engine düzenleyicisi
+#   vash run duzenleyici.vash                         (örnek oyunu açar)
+#   vash run duzenleyici.vash yol/oyun.json
+#   vash run duzenleyici.vash oyun.json --ekran resim.png [--sec 56] [--oyna]   (ekran görüntüsü alıp kapanır)
+import engine
+import graphics
+import arayuz
+import math
+import json
+import http
+
+extern "kernel32" needs files {
+    fn _FindFirstFileA(desen: text, veri: bytes) -> ptr
+    fn _FindNextFileA(h: ptr, veri: bytes) -> i32
+    fn _FindClose(h: ptr) -> i32
+    fn _GetCurrentDirectoryA(n: i32, veri: bytes) -> i32
+}
+
+extern "msvcrt" needs system {
+    fn _system(komut: text) -> i32
+}
+
+global var UST = 56.0
+global var ALT = 30.0
+global var SOL = 264.0
+global var SAG = 330.0
+
+global var DAVRANIS_ADLARI = {"platformer": "Platform karakteri", "topdown": "Dört yöne yürür", "gravity": "Yerçekimi", "patrol": "Devriye gezer", "enemy": "Düşman", "danger": "Tehlike", "collect": "Toplanır", "goal": "Bitiş", "float": "Süzülür", "camera": "Kamera izler"}
+global var DAVRANIS_ACIKLAMA = {"platformer": "Ok tuşlarıyla yürür, Boşluk ile zıplar", "topdown": "Ok tuşlarıyla dört yöne gider", "gravity": "Düşer, katı nesnelere konar", "patrol": "Sağa sola yürür, kenarda döner", "enemy": "Değerse can yakar, üstüne basılınca ezilir", "danger": "Değince oyuncu baştan başlar", "collect": "Oyuncu alınca puan kazanır", "goal": "Oyuncu değince oyun biter", "float": "Yavaşça aşağı yukarı süzülür", "camera": "Kamera bu nesneyi izler"}
+
+# Bir klasördeki dosyalar (desen: "klasor/*.png")
+fn dosyalar(desen: text) -> [text] {
+    use files
+    var sonuc: [text] = []
+    var veri = bytes(400)
+    var h = _FindFirstFileA(desen, veri)
+    repeat while true {
+        var ad = _dosya_adi(veri)
+        if ad.length is 0 {
+            stop
+        }
+        sonuc.add(ad)
+        veri[45] = 0
+        if _FindNextFileA(h, veri) is 0 {
+            stop
+        }
+    }
+    _FindClose(h)
+    sonuc.sort()
+    return sonuc
+}
+
+fn _dosya_adi(veri: bytes) -> text {
+    var son = 45
+    repeat while son <= veri.length and veri[son] is not 0 {
+        son = son + 1
+    }
+    if son is 45 {
+        return ""
+    }
+    return veri[45 to son - 1].to_text()
+}
+
+fn _listede(l: [text], x: text) -> bool {
+    return l.any(fn(e) => e is x)
+}
+
+fn izin_aciklamasi(izin: text, kod_var: bool) -> text {
+    if izin is "screen" {
+        return "Ekrana çizer, klavye ve fareyi okur"
+    }
+    if izin is "sound" {
+        return "Ses çalar"
+    }
+    if izin is "files" {
+        if kod_var {
+            return "Dosya okur / yazar"
+        }
+        return "Dosya okur (sadece kendi resim ve seslerini)"
+    }
+    if izin is "net" {
+        return "İnternete bağlanır"
+    }
+    if izin is "system" {
+        return "Bilgisayarda komut çalıştırır"
+    }
+    return "Saati okur"
+}
+
+fn su_anki_klasor() -> text {
+    use files
+    var veri = bytes(600)
+    var n = _GetCurrentDirectoryA(600, veri)
+    if n <= 0 {
+        return "."
+    }
+    return veri[1 to n].to_text()
+}
+
+fn izin_yok_aciklamasi(izin: text) -> text {
+    if izin is "screen" {
+        return "Ekrana çizmez"
+    }
+    if izin is "sound" {
+        return "Ses çalmaz"
+    }
+    if izin is "files" {
+        return "Dosyalarına dokunmaz"
+    }
+    if izin is "net" {
+        return "İnternete bağlanmaz"
+    }
+    if izin is "system" {
+        return "Bilgisayarda komut çalıştırmaz"
+    }
+    return "Saati okumaz"
+}
+
+# vash.cmd'nin yeri (çalışılan klasörden yukarı doğru aranır)
+fn vash_komutu() -> text {
+    use files
+    var veri = bytes(600)
+    var n = _GetCurrentDirectoryA(600, veri)
+    if n <= 0 {
+        return "vash"
+    }
+    var yer = veri[1 to n].to_text()
+    var adaylar = ["{yer}\\vash.cmd", "{yer}\\..\\vash.cmd", "{yer}\\..\\..\\vash.cmd", "{yer}\\..\\..\\..\\vash.cmd"]
+    repeat i from 1 to adaylar.length {
+        if file_exists(adaylar[i]) {
+            return "\"{adaylar[i]}\""
+        }
+    }
+    return "vash"
+}
+
+fn _davranis_adi(kind: text) -> text {
+    return DAVRANIS_ADLARI.get(kind, else: kind)
+}
+
+type Duzenleyici {
+    oyun: engine.Game
+    dosya: text
+    klasor: text
+    secili: int = 0
+    kam_x: float = 0.0
+    kam_y: float = 0.0
+    zoom: float = 0.6
+    ilk: bool = true
+    oynuyor: bool = false
+    calisan: engine.Game = engine.Game()
+    kayitlar: [engine.Game] = []           # oynarken her kare (geri sarmak için)
+    konum: int = 0
+    duraklat: bool = false
+    gecmis: [engine.Game] = []
+    ileri: [engine.Game] = []
+    son_degisiklik: text = ""
+    son_degisiklik_zamani: float = 0.0
+    kaydedildi: bool = true
+    durum: text = "Hazır"
+    surukle: text = ""
+    bas_x: float = 0.0
+    bas_y: float = 0.0
+    nesne_x: float = 0.0
+    nesne_y: float = 0.0
+    nesne_g: float = 0.0
+    nesne_h: float = 0.0
+    surukle_kaydedildi: bool = false
+    liste_kaydir: float = 0.0
+    ozellik_kaydir: float = 0.0
+    ozellik_boyu: float = 0.0
+    izgara: bool = true
+    resimler: [text] = []
+    sesler: [text] = []
+    palet: [graphics.Color] = []
+    bekleyen_is: text = ""
+    vash_yolu: text = "vash"
+    kart_acik: bool = false
+    kart_izinler: [text] = []
+    kart_kutuphaneler: [text] = []
+    kart_kod_var: bool = false
+    kart_hata: text = ""
+    kopru: http.Server = http.Server(id: 0, port: 0)
+    kopru_acik: bool = false
+    ekran_bekleyen: [http.Request] = []
+    calisma_klasoru: text = ""
+
+    fn change hazirla() {
+        use net
+        use sound
+        use screen
+        use files
+        oyun.folder = klasor
+        oyun.load_assets()
+        dosyalari_tara()
+        vash_yolu = vash_komutu()
+        calisma_klasoru = su_anki_klasor()
+        _kopru_ac()
+        repeat i from 1 to arayuz.PALET.length {
+            palet.add(engine.color(arayuz.PALET[i]))
+        }
+    }
+
+    fn change dosyalari_tara() {
+        use files
+        resimler = []
+        var r = dosyalar(engine.path(klasor, "resimler/*.png"))
+        repeat i from 1 to r.length {
+            resimler.add("resimler/{r[i]}")
+        }
+        sesler = []
+        var s = dosyalar(engine.path(klasor, "sesler/*.wav"))
+        repeat i from 1 to s.length {
+            sesler.add("sesler/{s[i]}")
+        }
+    }
+
+    # ---------- geri al ----------
+    fn change gecmise(anahtar: text) {
+        if anahtar.length > 0 and anahtar is son_degisiklik and arayuz.ZAMAN - son_degisiklik_zamani < 1.0 {
+            son_degisiklik_zamani = arayuz.ZAMAN
+            return
+        }
+        son_degisiklik = anahtar
+        son_degisiklik_zamani = arayuz.ZAMAN
+        gecmis.add(oyun)
+        if gecmis.length > 100 {
+            gecmis.remove(1)
+        }
+        ileri = []
+        kaydedildi = false
+    }
+
+    fn change geri_al() {
+        if gecmis.length is 0 {
+            durum = "Geri alınacak bir şey yok"
+            return
+        }
+        ileri.add(oyun)
+        oyun = gecmis[gecmis.length]
+        gecmis.remove(gecmis.length)
+        _secimi_duzelt()
+        son_degisiklik = ""
+        kaydedildi = false
+        durum = "Geri alındı"
+    }
+
+    fn change yinele() {
+        if ileri.length is 0 {
+            return
+        }
+        gecmis.add(oyun)
+        oyun = ileri[ileri.length]
+        ileri.remove(ileri.length)
+        _secimi_duzelt()
+        son_degisiklik = ""
+        durum = "Yinelendi"
+    }
+
+    fn change _secimi_duzelt() {
+        if secili > oyun.things.length {
+            secili = 0
+        }
+    }
+
+    fn change kaydet() {
+        use files
+        if engine.save(oyun, dosya) {
+            kaydedildi = true
+            durum = "Kaydedildi: {dosya}"
+        } else {
+            durum = "Kaydedilemedi: {dosya}"
+        }
+    }
+
+    # ---------- nesne işleri ----------
+    fn change ekle(tur: text) {
+        use sound
+        use files
+        use screen
+        gecmise("")
+        var ad = "Kutu"
+        var t = engine.Thing(name: "Kutu", color: "#41a6f6")
+        var orta_x = kam_x + (_orta_g() / 2.0) / zoom
+        var orta_y = kam_y + (_orta_h() / 2.0) / zoom
+        if tur is "image" {
+            var resim = ""
+            if resimler.length > 0 {
+                resim = resimler[1]
+            }
+            t = engine.Thing(name: "Resim", kind: "image", image: resim)
+        } else if tur is "text" {
+            t = engine.Thing(name: "Yazı", kind: "text", label: "Merhaba", width: 200.0, height: 40.0, color: "#ffffff")
+        }
+        t.x = math.round(orta_x / 24.0) * 24.0
+        t.y = math.round(orta_y / 24.0) * 24.0
+        t.name = _yeni_ad(t.name)
+        oyun.things.add(t)
+        oyun.load_assets()
+        secili = oyun.things.length
+        durum = "Eklendi: {t.name}"
+    }
+
+    fn _yeni_ad(kok: text) -> text {
+        if oyun.find(kok) is 0 {
+            return kok
+        }
+        var n = 2
+        repeat while oyun.find("{kok} {n}") > 0 {
+            n = n + 1
+        }
+        return "{kok} {n}"
+    }
+
+    fn change sil() {
+        if secili is 0 {
+            return
+        }
+        gecmise("")
+        var ad = oyun.things[secili].name
+        oyun.things.remove(secili)
+        secili = 0
+        durum = "Silindi: {ad}"
+    }
+
+    fn change cogalt() {
+        if secili is 0 {
+            return
+        }
+        gecmise("")
+        var t = oyun.things[secili]
+        t.name = _yeni_ad(t.name)
+        t.x = t.x + 24.0
+        t.y = t.y + 24.0
+        oyun.things.add(t)
+        secili = oyun.things.length
+        durum = "Çoğaltıldı: {t.name}"
+    }
+
+    fn change oyna() {
+        use sound
+        use screen
+        use files
+        calisan = oyun
+        calisan.prepare(klasor)
+        kayitlar = [calisan]
+        konum = 1
+        duraklat = false
+        oynuyor = true
+        durum = "Oynuyor · Durdurmak için Esc"
+    }
+
+    fn change durdur() {
+        oynuyor = false
+        durum = "Durduruldu"
+    }
+
+    fn change disa_aktar() {
+        use files
+        use system
+        kaydet()
+        var kod = engine.path(klasor, "oyna.vash")
+        if not file_exists(kod) {
+            write_file(kod, "# {oyun.title}\nimport engine\n\nengine.run(\"oyun.json\")\n")
+        }
+        var yer = klasor
+        if yer.length is 0 {
+            yer = "."
+        }
+        var cd = "cd /d \"{yer.replace("/", "\\")}\""
+        var sonuc = _system("{cd} && {vash_yolu} build oyna.vash > disa_aktar.txt 2>&1")
+        if sonuc is not 0 {
+            durum = "Dışa aktarılamadı; ayrıntı: disa_aktar.txt"
+            return
+        }
+        durum = "Hazır: {engine.path(klasor, "oyna.exe")}  (resimler ve sesler klasörüyle birlikte dağıt)"
+        # güvenlik kartı: derleyici kodu inceler
+        _system("{cd} && {vash_yolu} check --json oyna.vash > guvenlik.json 2>&1")
+        guvenligi_oku()
+        kart_acik = true
+    }
+
+    fn change guvenligi_oku() {
+        use files
+        kart_hata = ""
+        kart_izinler = []
+        kart_kutuphaneler = []
+        var icerik = read_file(engine.path(klasor, "guvenlik.json")) else: ""
+        var belge = json.parse(icerik)
+        if belge is none {
+            kart_hata = "Derleyicinin cevabı okunamadı."
+            return
+        }
+        var d = belge
+        if not json.as_bool(json.get(d, "ok"), false) {
+            kart_hata = "Kodda hata var; önce düzelt."
+            return
+        }
+        var iz = json.as_list(json.get(d, "permissions"))
+        repeat i from 1 to iz.length {
+            kart_izinler.add(json.as_text(iz[i], ""))
+        }
+        var std = ["graphics.vash", "math.vash", "http.vash", "json.vash", "csv.vash", "regex.vash", "engine.vash"]
+        var kl = json.as_list(json.get(d, "c_libraries"))
+        repeat i from 1 to kl.length {
+            var parca = json.as_text(kl[i], "").split("|")
+            var dosya_adi = ""
+            if parca.length > 1 {
+                dosya_adi = parca[2]
+            }
+            # Vash'ın kendi modülü mü? (oyunun klasöründe aynı adlı bir dosya varsa güvenme)
+            var kendi = _listede(std, dosya_adi) and not file_exists(engine.path(klasor, dosya_adi))
+            if not kendi {
+                kart_kutuphaneler.add("{parca[1]} ({dosya_adi})")
+            }
+        }
+        kart_kod_var = false
+        var satirlar = read_lines(engine.path(klasor, "oyna.vash")) else: []
+        repeat i from 1 to satirlar.length {
+            var s = satirlar[i].trim()
+            if s.length > 0 and not s.starts_with("#") and s is not "import engine" and not s.starts_with("engine.run(") {
+                kart_kod_var = true
+            }
+        }
+        var yazi: [text] = ["VASH ENGINE GÜVENLİK KARTI", "Oyun: {oyun.title}", "", "Bu kartı Vash derleyicisi oyunun kodunu inceleyerek yazdı.", ""]
+        var adlar = ["screen", "sound", "files", "net", "system", "time"]
+        repeat i from 1 to adlar.length {
+            var isaret = "[ ]"
+            if _listede(kart_izinler, adlar[i]) {
+                isaret = "[x]"
+            }
+            yazi.add("{isaret} {izin_aciklamasi(adlar[i], kart_kod_var)}")
+        }
+        yazi.add("")
+        if kart_kod_var {
+            yazi.add("Kod: kendi Vash kodu var (oyna.vash).")
+        } else {
+            yazi.add("Kod: kendi kodu yok; sadece Vash Engine'in hazır davranışları.")
+        }
+        if kart_kutuphaneler.length is 0 {
+            yazi.add("C kütüphaneleri: sadece Vash'ın kendi kütüphaneleri.")
+        } else {
+            yazi.add("C kütüphaneleri (dikkat): {kart_kutuphaneler.join(", ")}")
+        }
+        write_file(engine.path(klasor, "GUVENLIK.txt"), "{yazi.join("\n")}\n")
+    }
+
+    fn change kodla_calistir() {
+        use files
+        use system
+        kaydet()
+        var kod = engine.path(klasor, "oyna.vash")
+        if not file_exists(kod) {
+            write_file(kod, "# {oyun.title}\nimport engine\n\nengine.run(\"oyun.json\")\n")
+        }
+        var yer = klasor
+        if yer.length is 0 {
+            yer = "."
+        }
+        _system("start \"{oyun.title}\" /d \"{yer.replace("/", "\\")}\" cmd /c \"{vash_yolu} run oyna.vash\"")
+        durum = "Kodunla birlikte ayrı pencerede açıldı: oyna.vash"
+    }
+
+    # ---------- yerleşim ----------
+    fn _orta_x() -> float {
+        return SOL
+    }
+
+    fn _orta_y() -> float {
+        return UST
+    }
+
+    fn _orta_g() -> float {
+        use screen
+        return float(graphics.screen_width()) - SOL - SAG
+    }
+
+    fn _orta_h() -> float {
+        use screen
+        return float(graphics.screen_height()) - UST - ALT
+    }
+
+    fn change sigdir() {
+        use screen
+        var g = _orta_g()
+        var h = _orta_h()
+        zoom = math.min((g - 80.0) / oyun.view_width, (h - 80.0) / oyun.world_height)
+        kam_x = -40.0 / zoom
+        kam_y = -(h / zoom - oyun.world_height) / 2.0
+    }
+
+    # ---------- her kare ----------
+    fn change kare() {
+        use sound
+        use screen
+        use files
+        use system
+        arayuz.kare_basi()
+        if ilk {
+            sigdir()
+            ilk = false
+        }
+        if bekleyen_is is "disa" {
+            disa_aktar()
+            bekleyen_is = ""
+        }
+        _kisayollar()
+        graphics.begin_drawing(arayuz.ZEMIN)
+        _sahne()
+        _sol_panel()
+        _sag_panel()
+        _ust_cubuk()
+        _alt_cubuk()
+        if kart_acik {
+            _guvenlik_karti()
+        }
+        arayuz.kare_sonu()
+        graphics.end_drawing()
+    }
+
+    fn change _kisayollar() {
+        use sound
+        use screen
+        use files
+        if arayuz.yazi_yaziliyor() {
+            return
+        }
+        var ctrl = graphics.key_down(graphics.KEY_CONTROL)
+        if oynuyor {
+            if graphics.key_pressed(graphics.KEY_ESCAPE) {
+                durdur()
+            }
+            return
+        }
+        if ctrl and graphics.key_pressed(graphics.KEY_S) {
+            kaydet()
+        }
+        if ctrl and graphics.key_pressed(graphics.KEY_A + 25) {
+            geri_al()
+        }
+        if ctrl and graphics.key_pressed(graphics.KEY_A + 24) {
+            yinele()
+        }
+        if ctrl and graphics.key_pressed(graphics.KEY_D) {
+            cogalt()
+        }
+        if graphics.key_pressed(graphics.KEY_DELETE) {
+            sil()
+        }
+        if graphics.key_pressed(graphics.KEY_F1 + 4) {
+            oyna()
+        }
+    }
+
+    # ---------- sahne ----------
+    fn change _sahne() {
+        use sound
+        use screen
+        use files
+        var x = _orta_x()
+        var y = _orta_y()
+        var g = _orta_g()
+        var h = _orta_h()
+        graphics.draw_rectangle(x, y, g, h, graphics.rgb(18, 19, 23))
+        if oynuyor {
+            _oyun_sahnesi(x, y, g, h)
+            return
+        }
+        oyun.draw_with(x, y, g, h, kam_x, kam_y, zoom)
+        graphics.clip_begin(x, y, g, h)
+        if izgara and zoom * 48.0 >= 10.0 {
+            _izgara_ciz(x, y, g, h)
+        }
+        # dünyanın sınırı ve ilk görünen alan
+        graphics.draw_rectangle_outline(_ex(0.0), _ey(0.0), oyun.world_width * zoom, oyun.world_height * zoom, 1.0, graphics.rgba(255, 255, 255, 70))
+        graphics.draw_rectangle_outline(_ex(0.0), _ey(0.0), oyun.view_width * zoom, oyun.view_height * zoom, 1.0, graphics.rgba(255, 233, 168, 90))
+        arayuz.yazi_tur("Oyunun ilk görüntüsü", "s", _ex(0.0) + 6.0, _ey(0.0) + oyun.view_height * zoom - 22.0, graphics.rgba(255, 233, 168, 150))
+        _secim_ciz()
+        graphics.clip_end()
+        _sahne_fare(x, y, g, h)
+    }
+
+    fn _ex(wx: float) -> float {
+        return _orta_x() + (wx - kam_x) * zoom
+    }
+
+    fn _ey(wy: float) -> float {
+        return _orta_y() + (wy - kam_y) * zoom
+    }
+
+    fn _izgara_ciz(x: float, y: float, g: float, h: float) {
+        use screen
+        var adim = 48.0
+        var renk = graphics.rgba(255, 255, 255, 16)
+        var bx = math.max(0.0, math.floor(kam_x / adim) * adim)
+        var son_x = math.min(oyun.world_width, kam_x + g / zoom)
+        var son_y = math.min(oyun.world_height, kam_y + h / zoom)
+        var wx = bx
+        repeat while wx <= son_x {
+            graphics.draw_rectangle(_ex(wx), _ey(math.max(0.0, kam_y)), 1.0, (son_y - math.max(0.0, kam_y)) * zoom, renk)
+            wx = wx + adim
+        }
+        var wy = math.max(0.0, math.floor(kam_y / adim) * adim)
+        repeat while wy <= son_y {
+            graphics.draw_rectangle(_ex(math.max(0.0, kam_x)), _ey(wy), (son_x - math.max(0.0, kam_x)) * zoom, 1.0, renk)
+            wy = wy + adim
+        }
+    }
+
+    # Bir nesnenin ekrandaki kutusu
+    fn _ekran_kutusu(t: engine.Thing) -> [float] {
+        if t.on_screen {
+            return [_orta_x() + t.x * zoom, _orta_y() + t.y * zoom, t.width * zoom, t.height * zoom]
+        }
+        return [_ex(t.x), _ey(t.y), t.width * zoom, t.height * zoom]
+    }
+
+    fn _secim_ciz() {
+        use screen
+        if secili is 0 {
+            return
+        }
+        var k = _ekran_kutusu(oyun.things[secili])
+        graphics.draw_rectangle_outline(k[1] - 2.0, k[2] - 2.0, k[3] + 4.0, k[4] + 4.0, 2.0, arayuz.VURGU)
+        graphics.draw_rounded(k[1] + k[3] - 4.0, k[2] + k[4] - 4.0, 10.0, 10.0, 2.0, graphics.WHITE)
+        graphics.draw_rounded_outline(k[1] + k[3] - 4.0, k[2] + k[4] - 4.0, 10.0, 10.0, 2.0, 2.0, arayuz.VURGU)
+        var ad = oyun.things[secili].name
+        var ag = arayuz.genislik(ad, "s") + 14.0
+        graphics.draw_rounded(k[1] - 2.0, k[2] - 26.0, ag, 21.0, 5.0, arayuz.VURGU)
+        arayuz.yazi_tur(ad, "s", k[1] + 5.0, k[2] - 25.0, graphics.WHITE)
+    }
+
+    fn _isabet(fx: float, fy: float) -> int {
+        var sira = oyun.draw_order()
+        repeat k from sira.length to 1 step -1 {
+            var i = sira[k]
+            var b = _ekran_kutusu(oyun.things[i])
+            if fx >= b[1] and fx <= b[1] + b[3] and fy >= b[2] and fy <= b[2] + b[4] {
+                return i
+            }
+        }
+        return 0
+    }
+
+    fn change _sahne_fare(x: float, y: float, g: float, h: float) {
+        use screen
+        var icerde = arayuz.icinde(x, y, g, h) and not arayuz.ENGEL
+        var fx = arayuz.FARE_X
+        var fy = arayuz.FARE_Y
+        if icerde and arayuz.TEKER is not 0.0 {
+            var wx = kam_x + (fx - x) / zoom
+            var wy = kam_y + (fy - y) / zoom
+            zoom = math.clamp(zoom * math.pow(1.15, arayuz.TEKER), 0.15, 4.0)
+            kam_x = wx - (fx - x) / zoom
+            kam_y = wy - (fy - y) / zoom
+        }
+        var sag_tus = graphics.mouse_pressed(graphics.MOUSE_RIGHT) or graphics.mouse_pressed(graphics.MOUSE_MIDDLE)
+        if icerde and sag_tus {
+            surukle = "kaydir"
+            bas_x = fx
+            bas_y = fy
+            nesne_x = kam_x
+            nesne_y = kam_y
+        }
+        if icerde and arayuz.BASILDI and arayuz.fare_serbest() {
+            bas_x = fx
+            bas_y = fy
+            surukle_kaydedildi = false
+            var tutamak = false
+            if secili > 0 {
+                var k = _ekran_kutusu(oyun.things[secili])
+                tutamak = fx >= k[1] + k[3] - 8.0 and fx <= k[1] + k[3] + 10.0 and fy >= k[2] + k[4] - 8.0 and fy <= k[2] + k[4] + 10.0
+            }
+            if tutamak {
+                surukle = "boyut"
+            } else {
+                secili = _isabet(fx, fy)
+                if secili > 0 {
+                    surukle = "tasi"
+                } else {
+                    surukle = "kaydir"
+                    nesne_x = kam_x
+                    nesne_y = kam_y
+                }
+            }
+            if secili > 0 {
+                var t = oyun.things[secili]
+                nesne_x = t.x
+                nesne_y = t.y
+                nesne_g = t.width
+                nesne_h = t.height
+                ozellik_kaydir = 0.0
+            }
+        }
+        var basili = arayuz.BASILI or graphics.mouse_button_down(graphics.MOUSE_RIGHT) or graphics.mouse_button_down(graphics.MOUSE_MIDDLE)
+        if not basili {
+            surukle = ""
+            return
+        }
+        var dx = (fx - bas_x) / zoom
+        var dy = (fy - bas_y) / zoom
+        var serbest = graphics.key_down(graphics.KEY_SHIFT)
+        if surukle is "kaydir" {
+            kam_x = nesne_x - dx
+            kam_y = nesne_y - dy
+            arayuz.imlec(graphics.CURSOR_MOVE)
+        } else if surukle is "tasi" and secili > 0 and (math.abs(fx - bas_x) > 2.0 or math.abs(fy - bas_y) > 2.0) {
+            if not surukle_kaydedildi {
+                gecmise("")
+                surukle_kaydedildi = true
+            }
+            oyun.things[secili].x = _yapis(nesne_x + dx, serbest)
+            oyun.things[secili].y = _yapis(nesne_y + dy, serbest)
+            arayuz.imlec(graphics.CURSOR_MOVE)
+        } else if surukle is "boyut" and secili > 0 {
+            if not surukle_kaydedildi {
+                gecmise("")
+                surukle_kaydedildi = true
+            }
+            oyun.things[secili].width = math.max(8.0, _yapis(nesne_x + nesne_g + dx, serbest) - nesne_x)
+            oyun.things[secili].height = math.max(8.0, _yapis(nesne_y + nesne_h + dy, serbest) - nesne_y)
+            arayuz.imlec(graphics.CURSOR_RESIZE_LEFT_RIGHT)
+        }
+    }
+
+    fn _yapis(v: float, serbest: bool) -> float {
+        if serbest {
+            return math.round(v)
+        }
+        return math.round(v / 12.0) * 12.0
+    }
+
+    # ---------- üst çubuk ----------
+    fn change _ust_cubuk() {
+        use sound
+        use screen
+        use files
+        use system
+        var w = float(graphics.screen_width())
+        graphics.draw_rectangle(0.0, 0.0, w, UST, arayuz.PANEL)
+        graphics.draw_rectangle(0.0, UST - 1.0, w, 1.0, arayuz.CIZGI)
+        graphics.draw_rounded(16.0, 14.0, 28.0, 28.0, 7.0, arayuz.VURGU)
+        arayuz.yazi_tur("V", "b", 24.0, 15.0, graphics.WHITE)
+        arayuz.yazi_tur("Vash Engine", "k", 54.0, 17.0, arayuz.YAZI)
+        var bas = 54.0 + arayuz.genislik("Vash Engine", "k") + 12.0
+        var ad = oyun.title
+        if not kaydedildi {
+            ad = "{ad}  •"
+        }
+        arayuz.yazi(ad, bas, 17.0, arayuz.SOLUK)
+        var gx = bas + arayuz.genislik(ad, "n") + 24.0
+        if arayuz.dugme("geri", "", arayuz.S_GERI, gx, 12.0, 34.0, 32.0, "hayalet") and not oynuyor {
+            geri_al()
+        }
+        if arayuz.dugme("ileri", "", arayuz.S_ILERI, gx + 36.0, 12.0, 34.0, 32.0, "hayalet") and not oynuyor {
+            yinele()
+        }
+        var og = 112.0
+        if oynuyor {
+            if arayuz.dugme("oyna", "Durdur", arayuz.S_DUR, (w - og) / 2.0, 11.0, og, 34.0, "tehlike") {
+                durdur()
+            }
+        } else if arayuz.dugme("oyna", "Oyna", arayuz.S_OYNA, (w - og) / 2.0, 11.0, og, 34.0, "ana") {
+            oyna()
+        }
+        var sx = w - 16.0 - 104.0
+        if arayuz.dugme("kaydet", "Kaydet", arayuz.S_KAYDET, sx, 11.0, 104.0, 34.0, "normal") {
+            kaydet()
+        }
+        sx = sx - 8.0 - 124.0
+        if arayuz.dugme("disa", "Dışa aktar", arayuz.S_DISA, sx, 11.0, 124.0, 34.0, "normal") {
+            durum = "Oyun .exe olarak hazırlanıyor..."
+            bekleyen_is = "disa"
+        }
+        sx = sx - 8.0 - 150.0
+        if arayuz.dugme("kod", "Kodla çalıştır", arayuz.S_KOD, sx, 11.0, 150.0, 34.0, "hayalet") {
+            kodla_calistir()
+        }
+    }
+
+    # ---------- alt çubuk ----------
+    fn change _alt_cubuk() {
+        use screen
+        var w = float(graphics.screen_width())
+        var y = float(graphics.screen_height()) - ALT
+        graphics.draw_rectangle(0.0, y, w, ALT, arayuz.PANEL)
+        graphics.draw_rectangle(0.0, y, w, 1.0, arayuz.CIZGI)
+        arayuz.yazi_tur(durum, "s", 16.0, y + 6.0, arayuz.YAZI2)
+        var wx = kam_x + (arayuz.FARE_X - SOL) / zoom
+        var wy = kam_y + (arayuz.FARE_Y - UST) / zoom
+        var sag = "{oyun.things.length} nesne   ·   %{int(zoom * 100.0)}   ·   x {int(wx)}, y {int(wy)}"
+        var sg = arayuz.genislik(sag, "s")
+        arayuz.yazi_tur(sag, "s", w - SAG - sg - 16.0, y + 6.0, arayuz.SOLUK)
+        if arayuz.dugme("izgara", "Izgara", arayuz.S_IZGARA, w - SAG + 8.0, y + 3.0, 96.0, 24.0, "hayalet") {
+            izgara = not izgara
+        }
+        if arayuz.dugme("sigdir", "Sığdır", arayuz.S_ODAK, w - SAG + 108.0, y + 3.0, 96.0, 24.0, "hayalet") {
+            sigdir()
+        }
+    }
+
+    # ---------- sol panel: sahnedekiler ----------
+    fn change _sol_panel() {
+        use sound
+        use screen
+        use files
+        var h = float(graphics.screen_height())
+        graphics.draw_rectangle(0.0, UST, SOL, h - UST - ALT, arayuz.PANEL)
+        graphics.draw_rectangle(SOL - 1.0, UST, 1.0, h - UST - ALT, arayuz.CIZGI)
+        arayuz.baslik("Sahnedekiler", 18.0, UST + 18.0)
+        if arayuz.dugme("ekle", "Ekle", arayuz.S_EKLE, SOL - 16.0 - 78.0, UST + 10.0, 78.0, 30.0, "normal") {
+            arayuz.menu_ac("ekle_menu", SOL - 16.0 - 180.0, UST + 44.0, 180.0, ["Kutu", "Resim", "Yazı"])
+        }
+        var secim = arayuz.menu_sonucu("ekle_menu")
+        if secim is 1 {
+            ekle("box")
+        } else if secim is 2 {
+            ekle("image")
+        } else if secim is 3 {
+            ekle("text")
+        }
+        var y = UST + 52.0
+        _satir(0, arayuz.S_DUNYA, "Sahne ayarları", 10.0, y, SOL - 20.0)
+        y = y + 40.0
+        arayuz.ayrac(16.0, y - 4.0, SOL - 32.0)
+        var liste_y = y
+        var liste_h = h - ALT - liste_y - 8.0
+        if arayuz.icinde(0.0, liste_y, SOL, liste_h) and not arayuz.ENGEL {
+            liste_kaydir = liste_kaydir - arayuz.TEKER * 60.0
+        }
+        var toplam = float(oyun.things.length) * 36.0
+        liste_kaydir = math.clamp(liste_kaydir, 0.0, math.max(0.0, toplam - liste_h))
+        graphics.clip_begin(0.0, liste_y, SOL, liste_h)
+        repeat i from 1 to oyun.things.length {
+            var sy = liste_y + 4.0 + float(i - 1) * 36.0 - liste_kaydir
+            if sy > liste_y - 40.0 and sy < liste_y + liste_h {
+                var t = oyun.things[i]
+                _satir(i, _simge_of(t), t.name, 10.0, sy, SOL - 20.0)
+            }
+        }
+        graphics.clip_end()
+        if toplam > liste_h {
+            var oran = liste_h / toplam
+            var cy = liste_y + liste_kaydir / toplam * liste_h
+            graphics.draw_rounded(SOL - 7.0, cy, 4.0, liste_h * oran, 2.0, graphics.rgba(255, 255, 255, 40))
+        }
+    }
+
+    fn _simge_of(t: engine.Thing) -> int {
+        if engine.has_behavior(t, "platformer") or engine.has_behavior(t, "topdown") {
+            return arayuz.S_KISI
+        }
+        if engine.has_behavior(t, "collect") {
+            return arayuz.S_YILDIZ
+        }
+        if t.kind is "text" {
+            return arayuz.S_YAZI
+        }
+        if t.kind is "image" {
+            return arayuz.S_RESIM
+        }
+        return arayuz.S_KUTU
+    }
+
+    fn change _satir(i: int, sim: int, ad: text, x: float, y: float, w: float) {
+        use screen
+        var ustte = arayuz.icinde(x, y, w, 34.0) and not arayuz.ENGEL and arayuz.FARE_Y > UST + 50.0
+        if secili is i {
+            graphics.draw_rounded(x, y, w, 34.0, 7.0, arayuz.VURGU_ZEMIN)
+        } else if ustte {
+            graphics.draw_rounded(x, y, w, 34.0, 7.0, arayuz.USTUNDE)
+        }
+        var renk = arayuz.YAZI2
+        if secili is i {
+            renk = arayuz.VURGU_ACIK
+        }
+        arayuz.simge(sim, x + 12.0, y + 9.0, renk)
+        var yr = arayuz.YAZI
+        if i > 0 and oyun.things[i].hidden {
+            yr = arayuz.SOLUK
+        }
+        arayuz.yazi(ad, x + 40.0, y + 6.0, yr)
+        if ustte {
+            arayuz.imlec(graphics.CURSOR_HAND)
+            if arayuz.BASILDI {
+                secili = i
+                ozellik_kaydir = 0.0
+                arayuz.aktif("satir")
+            }
+        }
+    }
+
+    # ---------- sağ panel: ayarlar ----------
+    fn change _sag_panel() {
+        use sound
+        use screen
+        use files
+        var w = float(graphics.screen_width())
+        var h = float(graphics.screen_height())
+        var px = w - SAG
+        graphics.draw_rectangle(px, UST, SAG, h - UST - ALT, arayuz.PANEL)
+        graphics.draw_rectangle(px, UST, 1.0, h - UST - ALT, arayuz.CIZGI)
+        var alan_h = h - UST - ALT
+        if arayuz.icinde(px, UST, SAG, alan_h) and not arayuz.ENGEL {
+            ozellik_kaydir = ozellik_kaydir - arayuz.TEKER * 60.0
+        }
+        ozellik_kaydir = math.clamp(ozellik_kaydir, 0.0, math.max(0.0, ozellik_boyu - alan_h + 40.0))
+        graphics.clip_begin(px, UST, SAG, alan_h)
+        var bas = UST + 18.0 - ozellik_kaydir
+        var son = bas
+        if oynuyor {
+            son = _canli_panel(px + 20.0, bas, SAG - 40.0)
+        } else if secili is 0 {
+            son = _sahne_ayarlari(px + 20.0, bas, SAG - 40.0)
+        } else {
+            son = _nesne_ayarlari(px + 20.0, bas, SAG - 40.0)
+        }
+        ozellik_boyu = son - bas
+        graphics.clip_end()
+    }
+
+    # ---------- Claude köprüsü: sadece bu bilgisayardan (127.0.0.1:7377) ----------
+    fn change _kopru_ac() {
+        use net
+        var s = http.listen_local(7377)
+        if s is none {
+            durum = "Claude köprüsü açılamadı (7377 kullanılıyor olabilir)"
+            return
+        }
+        kopru = s
+        kopru_acik = true
+    }
+
+    fn change kopruyu_dinle() {
+        use net
+        use screen
+        use files
+        use sound
+        if not kopru_acik {
+            return
+        }
+        repeat k from 1 to 8 {
+            var gelen = kopru.next_within(0)
+            if gelen is none {
+                return
+            }
+            var istek = gelen
+            _istegi_isle(istek)
+        }
+    }
+
+    fn change _istegi_isle(istek: http.Request) {
+        use net
+        use screen
+        use files
+        use sound
+        var yol = istek.path
+        if yol is "/sahne" and istek.method is "GET" {
+            istek.reply(200, engine.to_json(oyun))
+        } else if yol is "/sahne" and istek.method is "POST" {
+            var yeni = engine.from_json(istek.body)
+            if yeni is none {
+                istek.reply(400, "Sahne JSON'u okunamadı: {json.error(istek.body)}")
+                return
+            }
+            var g = yeni
+            gecmise("")
+            g.textures = oyun.textures
+            g.sounds = oyun.sounds
+            g.fonts = oyun.fonts
+            g.folder = klasor
+            oyun = g
+            oyun.load_assets()
+            dosyalari_tara()
+            _secimi_duzelt()
+            durum = "Claude sahneyi değiştirdi (geri almak için Ctrl+Z)"
+            istek.reply(200, "tamam: {oyun.things.length} nesne")
+        } else if yol is "/ekran" {
+            ekran_bekleyen.add(istek)
+        } else if yol is "/mesaj" {
+            durum = "Claude: {istek.body}"
+            istek.reply(200, "tamam")
+        } else if yol is "/sec" {
+            secili = oyun.find(istek.body)
+            istek.reply(200, "seçili: {secili}")
+        } else if yol is "/kaydet" {
+            kaydet()
+            istek.reply(200, durum)
+        } else if yol is "/oyna" {
+            if not oynuyor {
+                oyna()
+            }
+            istek.reply(200, "oynuyor")
+        } else if yol is "/durdur" {
+            durdur()
+            istek.reply(200, "durdu")
+        } else if yol is "/durum" {
+            var sec_ad = ""
+            if secili > 0 and secili <= oyun.things.length {
+                sec_ad = oyun.things[secili].name
+            }
+            var o = json.object({"file": json.string(dosya), "folder": json.string(engine.path(calisma_klasoru, klasor)), "playing": json.boolean(oynuyor), "selected": json.string(sec_ad), "saved": json.boolean(kaydedildi), "things": json.number(float(oyun.things.length)), "images": json.array(resimler.map(fn(r) => json.string(r))), "sounds": json.array(sesler.map(fn(r) => json.string(r)))})
+            istek.reply(200, json.stringify(o))
+        } else {
+            istek.reply(404, "Bilinmeyen yol: {yol}")
+        }
+    }
+
+    # Bekleyen ekran görüntüsü isteklerine cevap ver (kare çizildikten sonra)
+    fn change ekran_isteklerini_bitir() {
+        use net
+        use screen
+        if ekran_bekleyen.length is 0 {
+            return
+        }
+        var ad = "vash_kopru_ekran.png"
+        graphics.screenshot(ad)
+        repeat i from 1 to ekran_bekleyen.length {
+            ekran_bekleyen[i].reply(200, "{calisma_klasoru}\\{ad}")
+        }
+        ekran_bekleyen = []
+    }
+
+    # ---------- güvenlik kartı ----------
+    fn change _guvenlik_karti() {
+        use screen
+        var sw = float(graphics.screen_width())
+        var sh = float(graphics.screen_height())
+        graphics.draw_rectangle(0.0, 0.0, sw, sh, graphics.rgba(8, 9, 12, 170))
+        var w = 560.0
+        var h = 600.0
+        var x = (sw - w) / 2.0
+        var y = (sh - h) / 2.0
+        graphics.draw_rounded(x, y + 6.0, w, h, 14.0, graphics.rgba(0, 0, 0, 90))
+        graphics.draw_rounded(x, y, w, h, 14.0, arayuz.PANEL)
+        graphics.draw_rounded_outline(x, y, w, h, 14.0, 1.0, arayuz.ALAN_CIZGI)
+        graphics.draw_rounded(x + 28.0, y + 28.0, 44.0, 44.0, 10.0, arayuz.VURGU_ZEMIN)
+        arayuz.simge(arayuz.S_KALKAN, x + 42.0, y + 42.0, arayuz.VURGU_ACIK)
+        arayuz.yazi_tur("Güvenlik kartı", "b", x + 88.0, y + 26.0, arayuz.YAZI)
+        arayuz.yazi_tur("Vash derleyicisi bu oyunun kodunu inceledi.", "s", x + 88.0, y + 56.0, arayuz.YAZI2)
+        var cy = y + 100.0
+        if kart_hata.length > 0 {
+            arayuz.yazi(kart_hata, x + 28.0, cy, arayuz.TEHLIKE)
+        } else {
+            arayuz.baslik("Bu oyun ne yapabilir?", x + 28.0, cy)
+            cy = cy + 30.0
+            var adlar = ["screen", "sound", "files", "net", "system", "time"]
+            repeat i from 1 to adlar.length {
+                var var_mi = _listede(kart_izinler, adlar[i])
+                var riskli = adlar[i] is "net" or adlar[i] is "system"
+                graphics.draw_rounded(x + 28.0, cy, w - 56.0, 40.0, 8.0, arayuz.PANEL2)
+                if var_mi and riskli {
+                    arayuz.simge(arayuz.S_UYARI, x + 42.0, cy + 12.0, graphics.rgb(255, 196, 77))
+                    arayuz.yazi(izin_aciklamasi(adlar[i], kart_kod_var), x + 72.0, cy + 8.0, arayuz.YAZI)
+                } else if var_mi {
+                    arayuz.simge(arayuz.S_TAMAM, x + 42.0, cy + 12.0, graphics.rgb(110, 220, 140))
+                    arayuz.yazi(izin_aciklamasi(adlar[i], kart_kod_var), x + 72.0, cy + 8.0, arayuz.YAZI)
+                } else {
+                    arayuz.simge(arayuz.S_KAPAT, x + 42.0, cy + 12.0, arayuz.SOLUK)
+                    arayuz.yazi(izin_yok_aciklamasi(adlar[i]), x + 72.0, cy + 8.0, arayuz.SOLUK)
+                }
+                cy = cy + 46.0
+            }
+            cy = cy + 10.0
+            arayuz.ayrac(x + 28.0, cy, w - 56.0)
+            cy = cy + 16.0
+            var kod_yazi = "Kendi kodu yok: sadece hazır davranışlar"
+            if kart_kod_var {
+                kod_yazi = "Kendi Vash kodu var (oyna.vash)"
+            }
+            _kart_satiri("Kod", kod_yazi, not kart_kod_var, x + 28.0, cy, w - 56.0)
+            cy = cy + 32.0
+            var kut = "Sadece Vash'ın kendi kütüphaneleri"
+            if kart_kutuphaneler.length > 0 {
+                kut = kart_kutuphaneler.join(", ")
+            }
+            _kart_satiri("C kütüphaneleri", kut, kart_kutuphaneler.length is 0, x + 28.0, cy, w - 56.0)
+            cy = cy + 40.0
+            arayuz.yazi_tur("Kart oyunun yanına GUVENLIK.txt olarak da yazıldı.", "s", x + 28.0, cy, arayuz.SOLUK)
+        }
+        if arayuz.dugme("kart_kapat", "Tamam", 0, x + w - 28.0 - 120.0, y + h - 28.0 - 38.0, 120.0, 38.0, "ana") or graphics.key_pressed(graphics.KEY_ESCAPE) {
+            kart_acik = false
+        }
+    }
+
+    fn _kart_satiri(ad: text, deger: text, iyi: bool, x: float, y: float, w: float) {
+        use screen
+        arayuz.yazi(ad, x, y, arayuz.YAZI2)
+        var renk = graphics.rgb(110, 220, 140)
+        if not iyi {
+            renk = graphics.rgb(255, 196, 77)
+        }
+        var dg = arayuz.genislik(deger, "k")
+        arayuz.yazi_tur(deger, "k", x + w - dg, y, renk)
+    }
+
+    # ---------- oynarken: zaman çubuğu, geri sarma ----------
+    fn change _oyun_sahnesi(x: float, y: float, g: float, h: float) {
+        use sound
+        use screen
+        var cubuk = 68.0
+        var by = y + h - cubuk
+        var alan_h = h - cubuk
+        # zaman çubuğu
+        graphics.draw_rectangle(x, by, g, cubuk, arayuz.PANEL)
+        graphics.draw_rectangle(x, by, g, 1.0, arayuz.CIZGI)
+        var bx = x + 16.0
+        arayuz.dugme("sar", "Geri sar", arayuz.S_GERISAR, bx, by + 16.0, 124.0, 36.0, "normal")
+        var sar = (arayuz.icinde(bx, by + 16.0, 124.0, 36.0) and arayuz.BASILI) or graphics.key_down(graphics.KEY_BACKSPACE)
+        var etiket = "Duraklat"
+        var sim = arayuz.S_DURAKLAT
+        if duraklat {
+            etiket = "Devam et"
+            sim = arayuz.S_OYNA
+        }
+        if arayuz.dugme("duraklat", etiket, sim, bx + 132.0, by + 16.0, 124.0, 36.0, "normal") or graphics.key_pressed(graphics.KEY_A + 15) {
+            duraklat = not duraklat
+        }
+        var sx = bx + 280.0
+        var sg = g - (sx - x) - 150.0
+        var toplam = kayitlar.length
+        var yeni = arayuz.kaydirici("zaman", sx, by + 34.0, sg, float(konum), float(toplam))
+        var geri_sn = float(toplam - konum) / 60.0
+        var yazi = "Canlı"
+        if konum < toplam {
+            yazi = "-{math.round(geri_sn * 10.0) / 10.0} sn"
+        }
+        arayuz.yazi_tur(yazi, "k", sx + sg + 20.0, by + 22.0, arayuz.YAZI)
+        arayuz.yazi_tur("son {toplam // 60} sn", "s", sx + sg + 20.0, by + 44.0, arayuz.SOLUK)
+        # geri sar / atla
+        if sar {
+            duraklat = true
+            konum = math.max_int(1, konum - 2)
+            calisan = kayitlar[konum]
+        } else if int(math.round(yeni)) is not konum {
+            duraklat = true
+            konum = math.clamp_int(int(math.round(yeni)), 1, toplam)
+            calisan = kayitlar[konum]
+        }
+        if not duraklat {
+            if konum < kayitlar.length {
+                var kalan: [engine.Game] = []
+                repeat i from 1 to konum {
+                    kalan.add(kayitlar[i])
+                }
+                kayitlar = kalan
+                durum = "Geri sarılan andan devam ediliyor"
+            }
+            calisan.update(graphics.frame_time())
+            kayitlar.add(calisan)
+            if kayitlar.length > 600 {
+                kayitlar.remove(1)
+            }
+            konum = kayitlar.length
+        }
+        # oyun
+        var olcek = math.min((g - 32.0) / calisan.view_width, (alan_h - 32.0) / calisan.view_height)
+        var w = calisan.view_width * olcek
+        var hh = calisan.view_height * olcek
+        var gx = x + (g - w) / 2.0
+        var gy = y + (alan_h - hh) / 2.0
+        calisan.draw(gx, gy, w, hh)
+        graphics.draw_rectangle_outline(gx - 1.0, gy - 1.0, w + 2.0, hh + 2.0, 1.0, arayuz.CIZGI)
+        if duraklat {
+            graphics.draw_rounded(gx + w - 272.0, gy + 12.0, 260.0, 28.0, 6.0, graphics.rgba(20, 22, 34, 200))
+            arayuz.yazi_tur("Duraklatıldı · bir nesneye tıkla", "s", gx + w - 260.0, gy + 17.0, graphics.WHITE)
+            # tıklanan nesneyi seç (o anki değerlerini görmek için)
+            if arayuz.BASILDI and arayuz.icinde(gx, gy, w, hh) and arayuz.fare_serbest() {
+                var wx = calisan.camera_x + (arayuz.FARE_X - gx) / olcek
+                var wy = calisan.camera_y + (arayuz.FARE_Y - gy) / olcek
+                var sira = calisan.draw_order()
+                var bulunan = 0
+                repeat k from sira.length to 1 step -1 {
+                    var t = calisan.things[sira[k]]
+                    if bulunan is 0 and t.alive and not t.on_screen and wx >= t.x and wx <= t.x + t.width and wy >= t.y and wy <= t.y + t.height {
+                        bulunan = sira[k]
+                    }
+                }
+                secili = bulunan
+            }
+            if secili > 0 and secili <= calisan.things.length {
+                var t = calisan.things[secili]
+                var sx2 = gx + (t.x - calisan.camera_x) * olcek
+                var sy2 = gy + (t.y - calisan.camera_y) * olcek
+                graphics.draw_rectangle_outline(sx2 - 2.0, sy2 - 2.0, t.width * olcek + 4.0, t.height * olcek + 4.0, 2.0, arayuz.VURGU)
+            }
+        }
+    }
+
+    # Oynarken sağ panel: seçilen nesnenin o anki değerleri
+    fn change _canli_panel(x: float, y0: float, w: float) -> float {
+        use screen
+        var y = y0
+        arayuz.simge(arayuz.S_GERISAR, x, y + 4.0, arayuz.VURGU_ACIK)
+        arayuz.yazi_tur("Zaman makinesi", "b", x + 26.0, y - 2.0, arayuz.YAZI)
+        y = y + 40.0
+        arayuz.yazi_tur("Oyun son 10 saniyeyi hatırlıyor.", "s", x, y, arayuz.YAZI2)
+        arayuz.yazi_tur("Geri sar'ı basılı tut ya da çubuğu sürükle.", "s", x, y + 20.0, arayuz.YAZI2)
+        arayuz.yazi_tur("Kısayollar: Geri tuşu sarar, P duraklatır.", "s", x, y + 40.0, arayuz.SOLUK)
+        y = y + 78.0
+        arayuz.ayrac(x, y - 8.0, w)
+        arayuz.baslik("Oyun", x, y + 6.0)
+        y = y + 34.0
+        y = _deger_satiri("Puan", text(calisan.score), x, y, w)
+        y = _deger_satiri("Süre", "{math.round(calisan.clock * 10.0) / 10.0} sn", x, y, w)
+        y = _deger_satiri("Kamera", "{int(calisan.camera_x)}, {int(calisan.camera_y)}", x, y, w)
+        var canli = 0
+        repeat i from 1 to calisan.things.length {
+            if calisan.things[i].alive {
+                canli = canli + 1
+            }
+        }
+        y = _deger_satiri("Duran nesne", "{canli} / {calisan.things.length}", x, y, w)
+        y = y + 16.0
+        arayuz.ayrac(x, y - 8.0, w)
+        if secili is 0 or secili > calisan.things.length {
+            arayuz.baslik("Nesne", x, y + 6.0)
+            arayuz.yazi_tur("Duraklatıp bir nesneye tıkla;", "s", x, y + 36.0, arayuz.SOLUK)
+            arayuz.yazi_tur("o andaki değerleri burada görünür.", "s", x, y + 56.0, arayuz.SOLUK)
+            return y + 90.0
+        }
+        var t = calisan.things[secili]
+        arayuz.baslik(t.name, x, y + 6.0)
+        y = y + 34.0
+        y = _deger_satiri("Konum", "{int(t.x)}, {int(t.y)}", x, y, w)
+        y = _deger_satiri("Hız", "{int(t.vx)}, {int(t.vy)}", x, y, w)
+        var yerde = "hayır"
+        if t.on_ground {
+            yerde = "evet"
+        }
+        y = _deger_satiri("Yerde mi", yerde, x, y, w)
+        var var_mi = "evet"
+        if not t.alive {
+            var_mi = "hayır (toplandı / ezildi)"
+        }
+        y = _deger_satiri("Oyunda mı", var_mi, x, y, w)
+        var yon = "sağa"
+        if t.facing_left {
+            yon = "sola"
+        }
+        y = _deger_satiri("Baktığı yön", yon, x, y, w)
+        return y + 20.0
+    }
+
+    fn _deger_satiri(ad: text, deger: text, x: float, y: float, w: float) -> float {
+        use screen
+        arayuz.yazi(ad, x, y, arayuz.YAZI2)
+        var dg = arayuz.genislik(deger, "k")
+        arayuz.yazi_tur(deger, "k", x + w - dg, y, arayuz.YAZI)
+        return y + 30.0
+    }
+
+    fn change _sahne_ayarlari(x: float, y0: float, w: float) -> float {
+        use screen
+        var y = y0
+        arayuz.simge(arayuz.S_DUNYA, x, y + 4.0, arayuz.VURGU_ACIK)
+        arayuz.yazi_tur("Sahne ayarları", "b", x + 26.0, y - 2.0, arayuz.YAZI)
+        y = y + 44.0
+        arayuz.etiket("Oyunun adı", x, y)
+        var ad = arayuz.metin_kutusu("s_ad", x, y + 26.0, w, 34.0, oyun.title)
+        if ad is not oyun.title {
+            gecmise("s_ad")
+            oyun.title = ad
+        }
+        y = y + 76.0
+        arayuz.baslik("Dünya", x, y)
+        y = y + 26.0
+        var yarim = (w - 10.0) / 2.0
+        var dg = arayuz.sayi_kutusu("s_dg", "G", x, y, yarim, 34.0, oyun.world_width, 48.0)
+        var dh = arayuz.sayi_kutusu("s_dh", "Y", x + yarim + 10.0, y, yarim, 34.0, oyun.world_height, 48.0)
+        if dg is not oyun.world_width or dh is not oyun.world_height {
+            gecmise("s_d")
+            oyun.world_width = math.max(oyun.view_width, dg)
+            oyun.world_height = math.max(oyun.view_height, dh)
+        }
+        y = y + 50.0
+        arayuz.etiket("Ekran boyutu", x, y)
+        y = y + 26.0
+        var gg = arayuz.sayi_kutusu("s_gg", "G", x, y, yarim, 34.0, oyun.view_width, 16.0)
+        var gh = arayuz.sayi_kutusu("s_gh", "Y", x + yarim + 10.0, y, yarim, 34.0, oyun.view_height, 9.0)
+        if gg is not oyun.view_width or gh is not oyun.view_height {
+            gecmise("s_g")
+            oyun.view_width = math.max(160.0, gg)
+            oyun.view_height = math.max(90.0, gh)
+        }
+        y = y + 54.0
+        arayuz.etiket("Yerçekimi", x, y + 7.0)
+        var yc = arayuz.sayi_kutusu("s_yc", "↓", x + 110.0, y, w - 110.0, 34.0, oyun.gravity, 10.0)
+        if yc is not oyun.gravity {
+            gecmise("s_yc")
+            oyun.gravity = yc
+        }
+        y = y + 44.0
+        arayuz.etiket("Piksel boyutu", x, y + 7.0)
+        var pb = arayuz.sayi_kutusu("s_pb", "×", x + 110.0, y, w - 110.0, 34.0, oyun.pixel_scale, 1.0)
+        if pb is not oyun.pixel_scale {
+            gecmise("s_pb")
+            oyun.pixel_scale = math.max(1.0, pb)
+        }
+        y = y + 58.0
+        arayuz.ayrac(x, y - 8.0, w)
+        arayuz.baslik("Gökyüzü", x, y + 6.0)
+        y = y + 32.0
+        arayuz.etiket("Üst renk", x, y)
+        var ust = arayuz.renk_secici("s_ust", x, y + 26.0, w, oyun.sky_top, palet)
+        if ust is not oyun.sky_top {
+            gecmise("s_ust")
+            oyun.sky_top = ust
+        }
+        y = y + 140.0
+        arayuz.etiket("Alt renk", x, y)
+        var alt = arayuz.renk_secici("s_alt", x, y + 26.0, w, oyun.sky_bottom, palet)
+        if alt is not oyun.sky_bottom {
+            gecmise("s_alt")
+            oyun.sky_bottom = alt
+        }
+        y = y + 150.0
+        arayuz.ayrac(x, y - 8.0, w)
+        arayuz.baslik("Arka plan katmanları", x, y + 6.0)
+        y = y + 34.0
+        repeat i from 1 to oyun.layers.length {
+            var k = oyun.layers[i]
+            graphics.draw_rounded(x, y, w, 76.0, 8.0, arayuz.PANEL2)
+            arayuz.simge(arayuz.S_RESIM, x + 12.0, y + 12.0, arayuz.YAZI2)
+            arayuz.yazi(k.image.replace("resimler/", ""), x + 38.0, y + 7.0, arayuz.YAZI)
+            arayuz.etiket("Kayma hızı", x + 12.0, y + 42.0)
+            var hz = arayuz.sayi_kutusu("s_k{i}", "»", x + 120.0, y + 36.0, w - 132.0, 30.0, k.speed, 0.01)
+            if hz is not k.speed {
+                gecmise("s_k{i}")
+                oyun.layers[i].speed = math.clamp(hz, 0.0, 1.0)
+            }
+            y = y + 86.0
+        }
+        return y + 20.0
+    }
+
+    fn change _nesne_ayarlari(x: float, y0: float, w: float) -> float {
+        use sound
+        use screen
+        use files
+        var t = oyun.things[secili]
+        var y = y0
+        arayuz.simge(_simge_of(t), x, y + 9.0, arayuz.VURGU_ACIK)
+        var ad = arayuz.metin_kutusu("n_ad{secili}", x + 28.0, y, w - 28.0 - 76.0, 34.0, t.name)
+        if ad is not t.name {
+            gecmise("")
+            oyun.things[secili].name = ad
+        }
+        if arayuz.dugme("cogalt", "", arayuz.S_KOPYA, x + w - 72.0, y, 34.0, 34.0, "hayalet") {
+            cogalt()
+            return y
+        }
+        if arayuz.dugme("sil", "", arayuz.S_SIL, x + w - 34.0, y, 34.0, 34.0, "hayalet") {
+            sil()
+            return y
+        }
+        y = y + 52.0
+        # tür
+        var turler = ["box", "image", "text"]
+        var adlar = ["Kutu", "Resim", "Yazı"]
+        var parca = w / 3.0
+        graphics.draw_rounded(x, y, w, 34.0, 7.0, arayuz.ALAN)
+        repeat i from 1 to 3 {
+            var bx = x + float(i - 1) * parca
+            if t.kind is turler[i] {
+                graphics.draw_rounded(bx + 3.0, y + 3.0, parca - 6.0, 28.0, 5.0, arayuz.PANEL2)
+                graphics.draw_rounded_outline(bx + 3.0, y + 3.0, parca - 6.0, 28.0, 5.0, 1.0, arayuz.ALAN_CIZGI)
+            }
+            var rg = arayuz.YAZI2
+            if t.kind is turler[i] {
+                rg = arayuz.YAZI
+            }
+            var ag = arayuz.genislik(adlar[i], "k")
+            arayuz.yazi_tur(adlar[i], "k", bx + (parca - ag) / 2.0, y + 5.0, rg)
+            if arayuz.icinde(bx, y, parca, 34.0) and not arayuz.ENGEL {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI and t.kind is not turler[i] {
+                    gecmise("")
+                    oyun.things[secili].kind = turler[i]
+                    arayuz.aktif("tur")
+                }
+            }
+        }
+        y = y + 52.0
+        t = oyun.things[secili]
+        if t.kind is "image" {
+            arayuz.etiket("Resim", x, y)
+            var secenekler = ["(yok)"]
+            var sira = 1
+            repeat i from 1 to resimler.length {
+                secenekler.add(resimler[i].replace("resimler/", ""))
+                if resimler[i] is t.image {
+                    sira = i + 1
+                }
+            }
+            var yeni = arayuz.secim("n_resim", x, y + 26.0, w, 34.0, secenekler, sira)
+            if yeni is not sira {
+                gecmise("")
+                if yeni is 1 {
+                    oyun.things[secili].image = ""
+                } else {
+                    oyun.things[secili].image = resimler[yeni - 1]
+                }
+                oyun.load_assets()
+            }
+            y = y + 74.0
+            if oyun.textures.has(t.image) {
+                var r = oyun.textures[t.image]
+                var on = math.min(w, 100.0)
+                graphics.draw_rounded(x, y, w, on + 16.0, 8.0, arayuz.ALAN)
+                var fw = float(r.width) / float(math.max_int(1, t.frames))
+                var olcek = math.min((on) / float(r.height), (w - 16.0) / fw)
+                olcek = math.floor(olcek)
+                if olcek < 1.0 {
+                    olcek = math.min((on) / float(r.height), (w - 16.0) / fw)
+                }
+                var kare = float(int(arayuz.ZAMAN * t.frame_speed) % math.max_int(1, t.frames))
+                graphics.draw_sprite(r, kare * fw, 0.0, fw, float(r.height), x + (w - fw * olcek) / 2.0, y + 8.0 + (on - float(r.height) * olcek) / 2.0, fw * olcek, float(r.height) * olcek, 0.0, false, graphics.WHITE)
+                y = y + on + 28.0
+            }
+            var yarim = (w - 10.0) / 2.0
+            arayuz.etiket("Kare sayısı", x, y)
+            arayuz.etiket("Kare hızı", x + yarim + 10.0, y)
+            var ks = arayuz.sayi_kutusu("n_ks", "#", x, y + 26.0, yarim, 34.0, float(t.frames), 1.0)
+            var kh = arayuz.sayi_kutusu("n_kh", "»", x + yarim + 10.0, y + 26.0, yarim, 34.0, t.frame_speed, 1.0)
+            if int(ks) is not t.frames or kh is not t.frame_speed {
+                gecmise("n_k")
+                oyun.things[secili].frames = math.max_int(1, int(ks))
+                oyun.things[secili].frame_speed = math.max(0.0, kh)
+            }
+            y = y + 74.0
+            var dose = arayuz.anahtar("n_dose", "Döşe (zemin gibi tekrarla)", x, y, w, t.tiled)
+            if dose is not t.tiled {
+                gecmise("")
+                oyun.things[secili].tiled = dose
+            }
+            y = y + 40.0
+        } else if t.kind is "text" {
+            arayuz.etiket("Yazı (\{score\}: puan)", x, y)
+            var yz = arayuz.metin_kutusu("n_yazi", x, y + 26.0, w, 34.0, t.label)
+            if yz is not t.label {
+                gecmise("")
+                oyun.things[secili].label = yz
+            }
+            y = y + 74.0
+            arayuz.etiket("Yazı boyu", x, y + 7.0)
+            var yb = arayuz.sayi_kutusu("n_yb", "A", x + 110.0, y, w - 110.0, 34.0, t.text_size, 1.0)
+            if yb is not t.text_size {
+                gecmise("n_yb")
+                oyun.things[secili].text_size = math.max(6.0, yb)
+            }
+            y = y + 48.0
+            var sabit = arayuz.anahtar("n_sabit", "Ekranda sabit dursun", x, y, w, t.on_screen)
+            if sabit is not t.on_screen {
+                gecmise("")
+                oyun.things[secili].on_screen = sabit
+            }
+            y = y + 40.0
+        }
+        if t.kind is "image" {
+            arayuz.etiket("Renk tonu (beyaz: olduğu gibi)", x, y)
+        } else {
+            arayuz.etiket("Renk", x, y)
+        }
+        var rk = arayuz.renk_secici("n_renk", x, y + 26.0, w, t.color, palet)
+        if rk is not t.color {
+            gecmise("n_renk")
+            oyun.things[secili].color = rk
+        }
+        y = y + 150.0
+        arayuz.ayrac(x, y - 8.0, w)
+        arayuz.baslik("Konum ve boyut", x, y + 6.0)
+        y = y + 32.0
+        var yarim2 = (w - 10.0) / 2.0
+        t = oyun.things[secili]
+        var nx = arayuz.sayi_kutusu("n_x", "X", x, y, yarim2, 34.0, t.x, 1.0)
+        var ny = arayuz.sayi_kutusu("n_y", "Y", x + yarim2 + 10.0, y, yarim2, 34.0, t.y, 1.0)
+        if nx is not t.x or ny is not t.y {
+            gecmise("n_xy")
+            oyun.things[secili].x = nx
+            oyun.things[secili].y = ny
+        }
+        y = y + 44.0
+        var ng = arayuz.sayi_kutusu("n_g", "G", x, y, yarim2, 34.0, t.width, 1.0)
+        var nh = arayuz.sayi_kutusu("n_h", "Y", x + yarim2 + 10.0, y, yarim2, 34.0, t.height, 1.0)
+        if ng is not t.width or nh is not t.height {
+            gecmise("n_gh")
+            oyun.things[secili].width = math.max(1.0, ng)
+            oyun.things[secili].height = math.max(1.0, nh)
+        }
+        y = y + 56.0
+        arayuz.ayrac(x, y - 8.0, w)
+        arayuz.baslik("Fizik ve çizim", x, y + 6.0)
+        y = y + 34.0
+        var kati = arayuz.anahtar("n_kati", "Katı (üstünde durulur)", x, y, w, t.solid)
+        if kati is not t.solid {
+            gecmise("")
+            oyun.things[secili].solid = kati
+        }
+        y = y + 38.0
+        var gizli = arayuz.anahtar("n_gizli", "Gizli", x, y, w, t.hidden)
+        if gizli is not t.hidden {
+            gecmise("")
+            oyun.things[secili].hidden = gizli
+        }
+        y = y + 42.0
+        arayuz.etiket("Katman (büyük olan önde)", x, y + 7.0)
+        var kt = arayuz.sayi_kutusu("n_kat", "#", x + w - 100.0, y, 100.0, 34.0, float(t.layer), 1.0)
+        if int(kt) is not t.layer {
+            gecmise("n_kat")
+            oyun.things[secili].layer = int(kt)
+        }
+        y = y + 58.0
+        arayuz.ayrac(x, y - 8.0, w)
+        arayuz.baslik("Davranışlar", x, y + 6.0)
+        y = y + 34.0
+        var bs = oyun.things[secili].behaviors
+        var silinecek = 0
+        repeat j from 1 to bs.length {
+            var yeni_y = _davranis_karti(j, x, y, w)
+            if yeni_y < 0.0 {
+                silinecek = j
+            } else {
+                y = yeni_y + 10.0
+            }
+        }
+        if silinecek > 0 {
+            gecmise("")
+            oyun.things[secili].behaviors.remove(silinecek)
+        }
+        if arayuz.dugme("d_ekle", "Davranış ekle", arayuz.S_EKLE, x, y, w, 36.0, "normal") {
+            var secenek: [text] = []
+            repeat i from 1 to engine.BEHAVIOR_KINDS.length {
+                secenek.add(_davranis_adi(engine.BEHAVIOR_KINDS[i]))
+            }
+            arayuz.menu_ac("d_menu", x, y + 40.0, w, secenek)
+        }
+        var ds = arayuz.menu_sonucu("d_menu")
+        if ds > 0 {
+            gecmise("")
+            oyun.things[secili].behaviors.add(engine.behavior(engine.BEHAVIOR_KINDS[ds]))
+        }
+        return y + 60.0
+    }
+
+    # Bir davranışın kartı; silinirse -1 döner
+    fn change _davranis_karti(j: int, x: float, y: float, w: float) -> float {
+        use sound
+        use screen
+        use files
+        var b = oyun.things[secili].behaviors[j]
+        var alanlar: [text] = []
+        if b.kind is "platformer" {
+            alanlar = ["speed:Yürüme hızı", "power:Zıplama gücü"]
+        } else if b.kind is "topdown" or b.kind is "patrol" {
+            alanlar = ["speed:Hız"]
+        } else if b.kind is "enemy" {
+            alanlar = ["power:Ezince puan", "sound:Ezilme sesi", "value:Vurma sesi"]
+        } else if b.kind is "danger" {
+            alanlar = ["sound:Ses"]
+        } else if b.kind is "collect" {
+            alanlar = ["power:Puan", "sound:Ses"]
+        } else if b.kind is "goal" {
+            alanlar = ["value:Mesaj", "sound:Ses"]
+        } else if b.kind is "float" {
+            alanlar = ["speed:Hız", "power:Yükseklik"]
+        }
+        var kart_h = 62.0 + float(alanlar.length) * 42.0
+        graphics.draw_rounded(x, y, w, kart_h, 9.0, arayuz.PANEL2)
+        graphics.draw_rounded_outline(x, y, w, kart_h, 9.0, 1.0, arayuz.CIZGI)
+        graphics.draw_rounded(x, y + 12.0, 3.0, 22.0, 1.5, arayuz.VURGU)
+        arayuz.yazi_tur(_davranis_adi(b.kind), "k", x + 14.0, y + 9.0, arayuz.YAZI)
+        arayuz.yazi_tur(DAVRANIS_ACIKLAMA.get(b.kind, else: ""), "s", x + 14.0, y + 33.0, arayuz.SOLUK)
+        if arayuz.dugme("d_sil{j}", "", arayuz.S_KAPAT, x + w - 36.0, y + 8.0, 28.0, 28.0, "hayalet") {
+            return -1.0
+        }
+        var ay = y + 60.0
+        var etiket_g = 118.0
+        repeat a from 1 to alanlar.length {
+            var parca = alanlar[a].split(":")
+            var alan = parca[1]
+            arayuz.yazi_tur(parca[2], "s", x + 14.0, ay + 8.0, arayuz.YAZI2)
+            var kx = x + etiket_g
+            var kg = w - etiket_g - 12.0
+            var kimlik = "d{secili}_{j}_{alan}"
+            if alan is "speed" {
+                var v = arayuz.sayi_kutusu(kimlik, "»", kx, ay, kg, 32.0, b.speed, 5.0)
+                if v is not b.speed {
+                    gecmise(kimlik)
+                    oyun.things[secili].behaviors[j].speed = v
+                }
+            } else if alan is "power" {
+                var v = arayuz.sayi_kutusu(kimlik, "»", kx, ay, kg, 32.0, b.power, 5.0)
+                if v is not b.power {
+                    gecmise(kimlik)
+                    oyun.things[secili].behaviors[j].power = v
+                }
+            } else if alan is "value" and b.kind is "goal" {
+                var v = arayuz.metin_kutusu(kimlik, kx, ay, kg, 32.0, b.value)
+                if v is not b.value {
+                    gecmise("")
+                    oyun.things[secili].behaviors[j].value = v
+                }
+            } else {
+                var mevcut = b.sound
+                if alan is "value" {
+                    mevcut = b.value
+                }
+                var secenek = ["(yok)"]
+                var sira = 1
+                repeat s from 1 to sesler.length {
+                    secenek.add(sesler[s].replace("sesler/", ""))
+                    if sesler[s] is mevcut {
+                        sira = s + 1
+                    }
+                }
+                var yeni = arayuz.secim(kimlik, kx, ay, kg, 32.0, secenek, sira)
+                if yeni is not sira {
+                    gecmise("")
+                    var dosya_adi = ""
+                    if yeni > 1 {
+                        dosya_adi = sesler[yeni - 1]
+                    }
+                    if alan is "value" {
+                        oyun.things[secili].behaviors[j].value = dosya_adi
+                    } else {
+                        oyun.things[secili].behaviors[j].sound = dosya_adi
+                    }
+                    oyun.load_assets()
+                }
+            }
+            ay = ay + 42.0
+        }
+        return y + kart_h
+    }
+}
+
+# ---------- başlat ----------
+var girdiler = args()
+var dosya = "ornekler/platform/oyun.json"
+var ekran = ""
+var sec = 0
+var hemen_oyna = false
+var geri = 0
+var kart = false
+var i = 1
+repeat while i <= girdiler.length {
+    var a = girdiler[i]
+    if a is "--ekran" and i < girdiler.length {
+        ekran = girdiler[i + 1]
+        i = i + 1
+    } else if a is "--sec" and i < girdiler.length {
+        sec = int(girdiler[i + 1], else: 0)
+        i = i + 1
+    } else if a is "--geri" and i < girdiler.length {
+        geri = int(girdiler[i + 1], else: 0)
+        i = i + 1
+    } else if a is "--kart" {
+        kart = true
+    } else if a is "--oyna" {
+        hemen_oyna = true
+    } else {
+        dosya = a
+    }
+    i = i + 1
+}
+
+var bulunan = engine.load(dosya)
+if bulunan is none {
+    print("Oyun dosyası açılamadı: {dosya}")
+} else {
+    var oyun = bulunan
+    graphics.open_resizable_window(1600, 900, "Vash Engine")
+    graphics.set_min_size(1100, 640)
+    graphics.set_exit_key(0)
+    graphics.open_audio()
+    arayuz.baslat()
+    var d = Duzenleyici(oyun: oyun, dosya: dosya, klasor: oyun.folder)
+    d.hazirla()
+    d.secili = sec
+    if hemen_oyna {
+        d.oyna()
+    }
+    if kart {
+        d.bekleyen_is = "disa"
+    }
+    var kare = 0
+    repeat while graphics.is_open() {
+        d.kopruyu_dinle()
+        d.kare()
+        d.ekran_isteklerini_bitir()
+        kare = kare + 1
+        if geri > 0 and kare is 130 {
+            d.duraklat = true
+            d.konum = math.max_int(1, d.kayitlar.length - geri)
+            d.calisan = d.kayitlar[d.konum]
+            d.secili = d.calisan.find("Sümük 1")
+        }
+        if ekran.length > 0 and kare is 140 {
+            graphics.screenshot(ekran)
+            stop
+        }
+    }
+    graphics.close_window()
+}

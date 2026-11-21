@@ -1,0 +1,6 @@
+# Aynı toplam, parallel repeat ile bütün çekirdeklerde
+var t = 0
+parallel repeat i from 1 to 2000000000 {
+    t = t + (i * 7) % 13
+}
+print(t)

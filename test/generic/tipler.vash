@@ -1,0 +1,59 @@
+# Generic tipler
+type Kutu[T] {
+    deger: T
+
+    fn al() -> T {
+        return deger
+    }
+}
+
+type Yigin[T] {
+    ogeler: [T] = []
+
+    fn change it(x: T) {
+        ogeler.add(x)
+    }
+
+    fn change cek() -> T fails {
+        if ogeler.length is 0 {
+            fail "yığın boş"
+        }
+        var son = ogeler[ogeler.length]
+        ogeler.remove(ogeler.length)
+        return son
+    }
+
+    fn bos_mu() -> bool {
+        return ogeler.length is 0
+    }
+}
+
+type Cift[A, B] {
+    ilk: A
+    ikinci: B
+}
+
+fn takas[A, B](c: Cift[A, B]) -> Cift[B, A] {
+    return Cift(ilk: c.ikinci, ikinci: c.ilk)
+}
+
+var k = Kutu(deger: 42)
+var m = Kutu(deger: "merhaba")
+print(k.al() + 1, m.al(), k, m)
+
+var y: Yigin[text] = Yigin()
+y.it("a")
+y.it("b")
+print(y.cek() else: "?", y.cek() else: "?", y.cek() else: "boş", y.bos_mu())
+
+var sayilar = Yigin(ogeler: [1, 2, 3])
+sayilar.it(4)
+print(sayilar.ogeler, sayilar.cek() else: 0)
+
+var c = Cift(ilk: 1, ikinci: "bir")
+var t = takas(c)
+print(c, t, t.ilk)
+
+var kutular: [Kutu[int]] = [Kutu(deger: 1), Kutu(deger: 2)]
+kutular[2].deger = 20
+print(kutular)

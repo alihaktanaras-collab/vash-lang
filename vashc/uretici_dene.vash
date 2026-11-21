@@ -1,0 +1,67 @@
+# Vash ile yazılmış derleyicinin bütün istasyonlarını dener:
+#   dosyayı okur → kelimelere ayırır → ağacı kurar → modülleri birleştirir → tipleri kontrol eder → LLVM IR üretir
+# İlk satır: .vash dosyasının yolu.  İkinci satır: pencere.html'in bulunduğu klasör.
+
+import lexer
+import parser
+import moduller
+import tipler
+import uretici
+
+# Dosyanın bulunduğu klasör (import edilen dosyalar orada aranır)
+fn klasor(yol: text) -> text {
+    var son = 0
+    repeat i from 1 to yol.length {
+        if yol[i] is "/" or yol[i] is "\\" {
+            son = i
+        }
+    }
+    if son <= 1 {
+        return ""
+    }
+    return yol[1 to son - 1]
+}
+
+fn ir_yaz(agac: parser.Dugum, sablon: text) {
+    use files
+    match tipler.kontrol_et(agac) {
+        Hata(mesaj) { print("HATA: {mesaj}") }
+        Tamam(tipli) {
+            match uretici.uret(tipli, sablon) {
+                Hata(mesaj) { print("HATA: {mesaj}") }
+                Tamam(ir) { write(ir) }
+            }
+        }
+    }
+}
+
+extern "msvcrt" {
+    fn _getenv(ad: text) -> text
+}
+
+# Eski (Python) derleyiciyle satır satır karşılaştırırken: sadece Vash derleyicisinde olan hızlandırmalar kapalı
+if _getenv("VASH_ESKI_URETIM") is "1" {
+    uretici.harf_hizlandirmasini_kapat()
+}
+
+var yol = input().trim()
+var sablon = input().trim()
+var kod = read_file(yol)
+if kod is none {
+    print("HATA: '{yol}' okunamadı.")
+} else {
+    match lexer.kelimelere_ayir(kod) {
+        Hata(mesaj) { print("HATA: {mesaj}") }
+        Tamam(tokenlar) {
+            match parser.agac_kur(tokenlar) {
+                Hata(mesaj) { print("HATA: {mesaj}") }
+                Tamam(agac) {
+                    match moduller.bagla(agac, klasor(yol)) {
+                        Hata(mesaj) { print("HATA: {mesaj}") }
+                        Tamam(bagli) { ir_yaz(bagli, sablon) }
+                    }
+                }
+            }
+        }
+    }
+}

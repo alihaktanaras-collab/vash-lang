@@ -1,0 +1,3 @@
+parallel repeat i from 1 to 4 {
+    var x = write_file("p{i}.txt", "a")
+}

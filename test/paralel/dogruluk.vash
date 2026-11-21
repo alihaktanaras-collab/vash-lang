@@ -1,0 +1,97 @@
+# parallel'in doğru sonuç verdiğini ve belleğin temiz kaldığını sınar.
+# (Aynı hesap bir kez paralel, bir kez sırayla yapılır; sonuçlar aynı olmalı.)
+
+type Nokta {
+    x: int
+    etiket: text
+}
+
+fn kare_toplami(bas: int, son: int) -> int {
+    var t = 0
+    repeat i from bas to son {
+        t = t + i * i
+    }
+    return t
+}
+
+fn asal_mi(n: int) -> bool {
+    if n < 2 {
+        return false
+    }
+    var d = 2
+    repeat while d * d <= n {
+        if n % d is 0 {
+            return false
+        }
+        d = d + 1
+    }
+    return true
+}
+
+var on_ek = "eleman"                        # bütün turların aynı anda okuduğu ortak metin
+var n = 20000
+var kareler: [int] = []
+var metinler: [text] = []
+var noktalar: [Nokta] = []
+repeat i from 1 to n {
+    kareler.add(0)
+    metinler.add("")
+    noktalar.add(Nokta(x: 0, etiket: ""))
+}
+
+repeat tekrar from 1 to 20 {                # sayaçlar aynı anda değişirken bozulma olursa er geç ortaya çıksın
+    parallel repeat i from 1 to n {
+        kareler[i] = i * i + tekrar
+        metinler[i] = "{on_ek} {i}"
+        noktalar[i] = Nokta(x: i, etiket: metinler[i])
+    }
+}
+
+var hata = 0
+repeat i from 1 to n {
+    if kareler[i] is not i * i + 20 or metinler[i] is not "eleman {i}" or noktalar[i].x is not i or noktalar[i].etiket is not "eleman {i}" {
+        hata = hata + 1
+    }
+}
+print("parallel repeat hatalı eleman sayısı:", hata)
+
+# parallel { }: üç ayrı iş aynı anda; sonuçları bloktan sonra kullanılır
+parallel {
+    var a = kare_toplami(1, 500000)
+    var b = kare_toplami(500001, 1000000)
+    var c = kare_toplami(1000001, 1500000)
+}
+print("parallel blok:", a + b + c is kare_toplami(1, 1500000))
+
+# Asalları say: her tur kendi aralığının sonucunu kendi sırasına yazar
+var parca_sayisi = 64
+var sayilar: [int] = []
+repeat i from 1 to parca_sayisi {
+    sayilar.add(0)
+}
+var paralel_sure = measure {
+    parallel repeat p from 1 to parca_sayisi {
+        var say = 0
+        repeat x from (p - 1) * 20000 + 1 to p * 20000 {
+            if asal_mi(x) {
+                say = say + 1
+            }
+        }
+        sayilar[p] = say
+    }
+}
+var toplam_paralel = 0
+repeat i from 1 to parca_sayisi {
+    toplam_paralel = toplam_paralel + sayilar[i]
+}
+var toplam_sirali = 0
+var sirali_sure = measure {
+    repeat x from 1 to parca_sayisi * 20000 {
+        if asal_mi(x) {
+            toplam_sirali = toplam_sirali + 1
+        }
+    }
+}
+print("asal sayısı (paralel / sırayla):", toplam_paralel, toplam_sirali)
+print("süre paralel:", paralel_sure)
+print("süre sırayla:", sirali_sure)

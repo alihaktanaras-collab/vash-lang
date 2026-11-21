@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vash Atölyesi</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161922;
+    --panel-2: #1c2030;
+    --border: #262a36;
+    --text: #e6e8ef;
+    --muted: #8b90a0;
+    --accent: #7c9cff;
+    --ok: #4ade80;
+    --err: #ff5370;
+    --err-bg: rgba(255, 83, 112, 0.14);
+    --wait: #4b5063;
+
+    /* Sözdizimi renkleri */
+    --s-kw: #c792ea;
+    --s-isim: #e6e8ef;
+    --s-tip: #82aaff;
+    --s-yerlesik: #ffcb6b;
+    --s-sayi: #f78c6c;
+    --s-metin: #c3e88d;
+    --s-ic: #89ddff;
+    --s-yorum: #6b7280;
+    --s-isaret: #89ddff;
+
+    --kod-font: "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
+    --kod-boyut: 14px;
+    --satir-yuk: 22px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---------- Üst çubuk ---------- */
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .bosluk { flex: 1; }
+  select, button {
+    font: inherit; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  }
+  button.ana {
+    background: var(--accent); color: #0b0d14; border-color: var(--accent);
+    font-weight: 600; padding: 6px 16px;
+  }
+  button.ana:hover { filter: brightness(1.1); }
+  .kisayol { color: var(--muted); font-size: 12px; }
+
+  /* ---------- Ana düzen ---------- */
+  main {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  @media (max-width: 860px) {
+    main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr 1fr; }
+  }
+
+  /* ---------- Editör ---------- */
+  .editor-alani {
+    display: flex; flex-direction: column; min-height: 0;
+    border-right: 1px solid var(--border);
+  }
+  .editor {
+    flex: 1; min-height: 0; position: relative; display: flex;
+    font-family: var(--kod-font); font-size: var(--kod-boyut); line-height: var(--satir-yuk);
+    font-variant-ligatures: none;   /* "->" yazısı tek bir ok gibi birleşmesin */
+  }
+  .numaralar {
+    padding: 12px 0; width: 48px; flex-shrink: 0;
+    text-align: right; color: var(--wait);
+    background: var(--panel); border-right: 1px solid var(--border);
+    overflow: hidden; user-select: none;
+  }
+  .numaralar div { padding-right: 10px; height: var(--satir-yuk); }
+  .numaralar div.hata { color: var(--err); font-weight: 700; }
+  .kod-kutusu { position: relative; flex: 1; min-width: 0; }
+  .kod-kutusu pre, .kod-kutusu textarea {
+    position: absolute; inset: 0; margin: 0;
+    padding: 12px 16px;
+    font: inherit; line-height: inherit; tab-size: 4;
+    white-space: pre; overflow: auto;
+  }
+  .kod-kutusu pre { overflow: hidden; pointer-events: none; color: var(--s-isim); }
+  .kod-kutusu pre .satir { height: var(--satir-yuk); min-width: max-content; padding-right: 16px; }
+  .kod-kutusu pre .satir.hata { background: var(--err-bg); box-shadow: inset 3px 0 0 var(--err); }
+  .kod-kutusu textarea {
+    color: transparent; caret-color: var(--text);
+    background: transparent; border: 0; outline: 0; resize: none;
+  }
+  .kod-kutusu textarea::selection { background: rgba(124, 156, 255, .3); }
+
+  .t-kw { color: var(--s-kw); font-weight: 600; }
+  .t-tip { color: var(--s-tip); }
+  .t-yerlesik { color: var(--s-yerlesik); }
+  .t-sayi { color: var(--s-sayi); }
+  .t-metin { color: var(--s-metin); }
+  .t-ic { color: var(--s-ic); }
+  .t-yorum { color: var(--s-yorum); font-style: italic; }
+  .t-isaret { color: var(--s-isaret); }
+  .t-yasak { color: var(--err); text-decoration: wavy underline var(--err); }
+
+  .durum {
+    display: flex; gap: 16px; padding: 4px 16px;
+    font-size: 12px; color: var(--muted);
+    background: var(--panel); border-top: 1px solid var(--border);
+  }
+  .durum .hata { color: var(--err); }
+  .durum .tamam { color: var(--ok); }
+
+  /* ---------- Sağ panel ---------- */
+  .panel { display: flex; flex-direction: column; min-height: 0; }
+
+  /* İstasyon bandı */
+  .bant {
+    display: flex; align-items: center; gap: 6px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .istasyon {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel);
+    font-size: 12px; white-space: nowrap; cursor: pointer; color: var(--muted);
+  }
+  .istasyon .nokta { width: 8px; height: 8px; border-radius: 50%; background: var(--wait); }
+  .istasyon.tamam { color: var(--text); }
+  .istasyon.tamam .nokta { background: var(--ok); }
+  .istasyon.hata { color: var(--err); border-color: var(--err); }
+  .istasyon.hata .nokta { background: var(--err); }
+  .istasyon.secili { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ok { color: var(--wait); font-size: 12px; }
+
+  .icerik { flex: 1; overflow: auto; padding: 16px; }
+
+  /* Çıktı */
+  .cikti {
+    font-family: var(--kod-font); font-size: var(--kod-boyut);
+    background: #0a0c11; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; min-height: 120px; white-space: pre-wrap;
+  }
+  .kart {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .kart h3 { margin: 0 0 6px; font-size: 14px; }
+  .kart p { margin: 0; color: var(--muted); }
+  .kart.hata { border-color: var(--err); background: var(--err-bg); }
+  .kart.hata h3 { color: var(--err); }
+  .kart.hata pre {
+    margin: 8px 0 0; font-family: var(--kod-font); font-size: 13px;
+    white-space: pre-wrap; color: var(--text);
+  }
+  .yol { margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
+  .yol li { margin: 2px 0; }
+  .yol li.tamam { color: var(--ok); }
+  .yol li.hata { color: var(--err); }
+
+  /* Token listesi */
+  .token-satiri {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 6px 8px; border-radius: 6px; cursor: pointer;
+  }
+  .token-satiri:hover { background: var(--panel); }
+  .token-satiri .no {
+    font-family: var(--kod-font); font-size: 12px; color: var(--muted);
+    width: 64px; flex-shrink: 0; padding-top: 3px; white-space: nowrap;
+  }
+  .tokenlar { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tk {
+    font-family: var(--kod-font); font-size: 12px; font-variant-ligatures: none;
+    padding: 2px 7px; border-radius: 5px;
+    background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .tk b { font-weight: 600; }
+  .tk i { font-style: normal; opacity: .75; margin-left: 4px; }
+  .tk.kw { color: var(--s-kw); border-color: rgba(199,146,234,.35); }
+  .tk.isim { color: var(--s-isim); }
+  .tk.sayi { color: var(--s-sayi); border-color: rgba(247,140,108,.35); }
+  .tk.metin { color: var(--s-metin); border-color: rgba(195,232,141,.35); }
+  .tk.isaret { color: var(--s-isaret); }
+  .tk.ozel { color: var(--muted); border-style: dashed; }
+  .aciklama { color: var(--muted); margin: 0 0 12px; }
+
+  /* Program girdisi */
+  .girdi-alani { margin-bottom: 14px; }
+  .girdi-alani label { display: block; font-size: 13px; margin-bottom: 6px; }
+  .girdi-alani label span { color: var(--muted); }
+  .girdi-alani textarea {
+    width: 100%; resize: vertical; box-sizing: border-box;
+    font-family: var(--kod-font); font-size: 13px; color: var(--text);
+    background: #0a0c11; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  }
+  .girdi-alani textarea:focus { outline: none; border-color: var(--accent); }
+
+  /* Çıktı ve LLVM IR */
+  .cikti.eski { opacity: .5; }
+  .bos-cikti { color: var(--muted); font-style: italic; }
+  button:disabled { opacity: .7; cursor: wait; }
+  pre.ir {
+    margin: 0; padding: 14px 16px; overflow: auto;
+    font-family: var(--kod-font); font-size: 12.5px; line-height: 1.55; font-variant-ligatures: none;
+    background: #0a0c11; border: 1px solid var(--border); border-radius: 8px;
+  }
+  .ir-yorum { color: var(--s-yorum); font-style: italic; }
+  .ir-komut { color: var(--s-kw); }
+  .ir-tip { color: var(--s-tip); }
+  .ir-yerel { color: var(--s-sayi); }
+  .ir-global { color: var(--s-yerlesik); }
+  .ir-metin { color: var(--s-metin); }
+  .ir-etiket { color: var(--s-ic); font-weight: 600; }
+
+  /* Tipler (3. istasyon) */
+  .kapsam { margin-bottom: 14px; }
+  .kapsam h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .kapsam table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .kapsam th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .kapsam td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .kapsam tr:last-child td { border-bottom: 0; }
+  .kapsam tr[data-satir] { cursor: pointer; }
+  .kapsam tr[data-satir]:hover td { background: var(--panel-2); }
+  .kapsam td.kod { font-family: var(--kod-font); font-size: 13px; font-variant-ligatures: none; }
+  .kapsam td.tip { color: var(--s-tip); }
+  .kapsam td.satirno { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .kapsam td.bos { color: var(--muted); font-style: italic; }
+  .rozet { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .r-global { color: var(--s-yerlesik); border-color: rgba(255,203,107,.4); }
+  .r-parametre { color: var(--s-tip); border-color: rgba(130,170,255,.4); }
+  .r-useokur { color: var(--s-metin); border-color: rgba(195,232,141,.4); }
+  .r-usechange { color: var(--s-sayi); border-color: rgba(247,140,108,.4); }
+  .r-dngsayac { color: var(--s-kw); border-color: rgba(199,146,234,.4); }
+
+  /* Ağaç (2. istasyon) */
+  ul.agac { list-style: none; margin: 0; padding-left: 22px; position: relative; }
+  ul.agac.kok { padding-left: 0; }
+  ul.agac li { position: relative; padding: 3px 0; }
+  ul.agac:not(.kok) > li::before {          /* yatay çizgi */
+    content: ""; position: absolute; left: -14px; top: 15px; width: 12px;
+    border-top: 1px solid var(--border);
+  }
+  ul.agac:not(.kok) > li::after {           /* dikey çizgi */
+    content: ""; position: absolute; left: -14px; top: 0; bottom: 0;
+    border-left: 1px solid var(--border);
+  }
+  ul.agac:not(.kok) > li:last-child::after { bottom: auto; height: 15px; }
+  .dugum {
+    display: inline-block; cursor: pointer;
+    font-family: var(--kod-font); font-size: 12.5px; font-variant-ligatures: none;
+    padding: 2px 8px; border-radius: 5px;
+    background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .dugum:hover { border-color: var(--accent); }
+  .dugum b { font-weight: 600; }
+  .d-bilgi { color: var(--text); opacity: .85; }
+  .d-program b { color: var(--muted); }
+  .d-komut b { color: var(--s-kw); }
+  .d-fn b { color: var(--s-kw); }
+  .d-fn { border-color: rgba(199,146,234,.4); }
+  .d-cagri b { color: var(--s-yerlesik); }
+  .d-islem b { color: var(--s-isaret); }
+  .d-sayi b { color: var(--s-sayi); }
+  .d-metin b { color: var(--s-metin); }
+  .d-isim b { color: var(--s-tip); }
+  .lejant { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Vash <span>· atölye</span></h1>
+  <div class="bosluk"></div>
+  <select id="ornekSecici" title="Örnek program aç">
+    <option value="">Örnek aç…</option>
+  </select>
+  <span class="kisayol">Ctrl + Enter</span>
+  <button class="ana" id="calistir">▶ Çalıştır</button>
+</header>
+
+<main>
+  <!-- SOL: kod editörü -->
+  <section class="editor-alani">
+    <div class="editor">
+      <div class="numaralar" id="numaralar"></div>
+      <div class="kod-kutusu">
+        <pre id="renkli" aria-hidden="true"></pre>
+        <textarea id="kod" spellcheck="false" autocomplete="off" autocapitalize="off"
+                  aria-label="Kod editörü"></textarea>
+      </div>
+    </div>
+    <div class="durum">
+      <span id="konum">Satır 1, Sütun 1</span>
+      <span id="durumMesaji"></span>
+    </div>
+  </section>
+
+  <!-- SAĞ: derleyicinin istasyonları ve sonuç -->
+  <section class="panel">
+    <div class="bant" id="bant"></div>
+    <div class="icerik" id="icerik"></div>
+  </section>
+</main>
+
+<script>
+// =====================================================================
+//  AYARLAR
+// =====================================================================
+
+// Renklendirme için dilimizin kelimeleri (TASARIM.md ile aynı olmalı)
+const ANAHTAR = new Set(["fn", "function", "var", "variable", "return", "is", "not",
+                         "true", "false", "use", "global", "if", "else", "repeat", "while",
+                         "stop", "skip", "and", "or", "when", "type", "measure"]);
+const REPEAT_KELIMELERI = new Set(["from", "to", "step"]);   // sadece repeat satırında özel
+const TIPLER = new Set(["int", "integer", "float", "text", "bool"]);
+const YERLESIK = new Set(["print", "write", "input", "random", "time"]);
+
+// Derleyicinin istasyonları. "hazir": false olanlar henüz yazılmadı.
+const ISTASYONLAR = [
+  { id: "cikti",  ad: "Çıktı",          hazir: true  },
+  { id: "lexer",  ad: "1 · Kelimeler",  hazir: true  },
+  { id: "parser", ad: "2 · Ağaç",       hazir: true  },
+  { id: "tipler", ad: "3 · Tipler",     hazir: true  },
+  { id: "llvm",   ad: "4 · LLVM IR",    hazir: true  },
+];
+
+const KAYIT_ANAHTARI = "dil-atolyesi-kod";
+
+// =====================================================================
+//  DURUM
+// =====================================================================
+const $ = (id) => document.getElementById(id);
+const kodKutusu = $("kod");
+let sonSonuc = null;          // sunucudan gelen son derleme sonucu
+let sonCalisma = null;        // son "Çalıştır"ın sonucu: { kod, cikti, calisma_hatasi, sure_ms }
+let seciliSekme = "lexer";
+let hataSatiri = null;
+
+// =====================================================================
+//  RENKLENDİRME (sözdizimi vurgulama)
+// =====================================================================
+function kacir(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Metnin içindeki {degisken} kısımlarını ayrı renkle göster
+function metniRenkle(m) {
+  return kacir(m).replace(/\{[^}]*\}/g, (p) => `<span class="t-ic">${p}</span>`);
+}
+
+function satiriRenkle(satir) {
+  let html = "";
+  let i = 0;
+  let oncekiKelime = "";
+  while (i < satir.length) {
+    const h = satir[i];
+    if (h === "#") {
+      html += `<span class="t-yorum">${kacir(satir.slice(i))}</span>`;
+      break;
+    }
+    if (h === '"') {
+      let j = satir.indexOf('"', i + 1);
+      j = j === -1 ? satir.length : j + 1;
+      html += `<span class="t-metin">${metniRenkle(satir.slice(i, j))}</span>`;
+      i = j; continue;
+    }
+    if (/[0-9]/.test(h)) {
+      let j = i; while (j < satir.length && /[0-9]/.test(satir[j])) j++;
+      if (satir[j] === "." && /[0-9]/.test(satir[j + 1] || "")) {   // ondalık: 3.14
+        j++; while (j < satir.length && /[0-9]/.test(satir[j])) j++;
+      }
+      html += `<span class="t-sayi">${satir.slice(i, j)}</span>`;
+      i = j; continue;
+    }
+    if (/[A-Za-z_À-ɏ]/.test(h)) {
+      let j = i; while (j < satir.length && /[A-Za-z0-9_À-ɏ]/.test(satir[j])) j++;
+      const k = satir.slice(i, j);
+      // "change" sadece "use"dan sonra anahtar kelime (bağlamsal kelime)
+      const kw = ANAHTAR.has(k) || (k === "change" && (oncekiKelime === "use" || oncekiKelime === "fn"))
+              || (k === "later" && oncekiKelime === "when")
+              || (REPEAT_KELIMELERI.has(k) && /^\s*repeat\b/.test(satir));
+      const sinif = kw ? "t-kw" : TIPLER.has(k) ? "t-tip" : YERLESIK.has(k) ? "t-yerlesik" : "";
+      html += sinif ? `<span class="${sinif}">${k}</span>` : k;
+      oncekiKelime = k;
+      i = j; continue;
+    }
+    if (/[0-9]/.test(h) === false && h !== " ") oncekiKelime = "";
+    const iki = satir.slice(i, i + 2);
+    if (iki === "==" || iki === "!=") {   // bu dilde yok
+      html += `<span class="t-yasak">${iki}</span>`;
+      i += 2; continue;
+    }
+    if ("+-*/%=<>(){}[]:,;.".includes(h)) {
+      html += `<span class="t-isaret">${kacir(h)}</span>`;
+      i++; continue;
+    }
+    html += kacir(h);
+    i++;
+  }
+  return html;
+}
+
+function editoruCiz() {
+  const satirlar = kodKutusu.value.split("\n");
+  $("renkli").innerHTML = satirlar
+    .map((s, n) => `<div class="satir${n + 1 === hataSatiri ? " hata" : ""}">${satiriRenkle(s) || " "}</div>`)
+    .join("");
+  $("numaralar").innerHTML = satirlar
+    .map((_, n) => `<div class="${n + 1 === hataSatiri ? "hata" : ""}">${n + 1}</div>`)
+    .join("");
+  kaydirmayiEsitle();
+}
+
+function kaydirmayiEsitle() {
+  $("renkli").scrollTop = kodKutusu.scrollTop;
+  $("renkli").scrollLeft = kodKutusu.scrollLeft;
+  $("numaralar").scrollTop = kodKutusu.scrollTop;
+}
+
+function konumuGoster() {
+  const once = kodKutusu.value.slice(0, kodKutusu.selectionStart).split("\n");
+  $("konum").textContent = `Satır ${once.length}, Sütun ${once[once.length - 1].length + 1}`;
+}
+
+// =====================================================================
+//  DERLEME: kodu sunucuya gönder, sonucu göster
+// =====================================================================
+// calistir = false: sadece 1-4. istasyonlar (yazarken, hızlı)
+// calistir = true : ayrıca .exe üret ve çalıştır ("Çalıştır" düğmesi)
+async function derle(calistir = false) {
+  const kod = kodKutusu.value;
+  try { localStorage.setItem(KAYIT_ANAHTARI, kod); } catch (e) {}
+
+  const dugme = $("calistir");
+  if (calistir) { dugme.disabled = true; dugme.textContent = "⏳ Derleniyor…"; }
+  try {
+    const yanit = await fetch("/derle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kod, calistir, girdi: programGirdisi }),
+    });
+    sonSonuc = await yanit.json();
+  } catch (e) {
+    sonSonuc = { asamalar: {}, cikti: null,
+      hata: { istasyon: "Bağlantı", mesaj: "Sunucuya ulaşılamadı. 'python arayuz\\sunucu.py' çalışıyor mu?" } };
+  }
+  if (calistir) {
+    dugme.disabled = false; dugme.textContent = "▶ Çalıştır";
+    sonCalisma = sonSonuc.cikti !== null
+      ? { kod, cikti: sonSonuc.cikti, calisma_hatasi: sonSonuc.calisma_hatasi, sure_ms: sonSonuc.sure_ms }
+      : null;
+  }
+
+  hataSatiri = sonSonuc.hata ? sonSonuc.hata.satir : null;
+  editoruCiz();
+  durumuGoster();
+  bandiCiz();
+  sekmeyiCiz();
+}
+
+function durumuGoster() {
+  const d = $("durumMesaji");
+  if (sonSonuc.hata) {
+    d.className = "hata";
+    d.textContent = `✗ ${sonSonuc.hata.istasyon}: ${sonSonuc.hata.mesaj.split("\n")[0]}`;
+  } else {
+    d.className = "tamam";
+    d.textContent = `✓ 4 istasyon hatasız — çalıştırmaya hazır`;
+  }
+}
+
+// İstasyonun durumu: "tamam", "hata" ya da "" (henüz yapılmadı / çalışmadı)
+function istasyonDurumu(id) {
+  if (!sonSonuc) return "";
+  if (sonSonuc.hata && sonSonuc.hata.istasyon.toLowerCase().includes(id)) return "hata";
+  if (id === "cikti") {
+    if (!sonCalisma || sonCalisma.kod !== kodKutusu.value || sonSonuc.hata) return "";
+    return sonCalisma.calisma_hatasi ? "hata" : "tamam";
+  }
+  return sonSonuc.asamalar[id] ? "tamam" : "";
+}
+
+function bandiCiz() {
+  $("bant").innerHTML = ISTASYONLAR.map((ist, n) =>
+    (n > 1 ? `<span class="ok">→</span>` : "") +
+    `<div class="istasyon ${istasyonDurumu(ist.id)} ${ist.id === seciliSekme ? "secili" : ""}"
+          data-id="${ist.id}" title="${ist.hazir ? "" : "Henüz yapılmadı"}">
+       <span class="nokta"></span>${ist.ad}
+     </div>`
+  ).join("");
+  document.querySelectorAll(".istasyon").forEach((el) =>
+    el.addEventListener("click", () => { seciliSekme = el.dataset.id; bandiCiz(); sekmeyiCiz(); }));
+}
+
+// =====================================================================
+//  SAĞ PANEL İÇERİĞİ
+// =====================================================================
+function hataKarti() {
+  const h = sonSonuc && sonSonuc.hata;
+  if (!h) return "";
+  return `<div class="kart hata"><h3>✗ Hata — ${kacir(h.istasyon)}</h3><pre>${kacir(h.mesaj)}</pre></div>`;
+}
+
+function sekmeyiCiz() {
+  const ic = $("icerik");
+  if (!sonSonuc) { ic.innerHTML = ""; return; }
+
+  if (seciliSekme === "cikti") {
+    // Derleme hatası varsa: program çalıştırılamaz
+    if (sonSonuc.hata) {
+      ic.innerHTML = hataKarti() + `<p class="aciklama">Hata düzelince program çalıştırılabilir.</p>`;
+      return;
+    }
+    const guncel = sonCalisma && sonCalisma.kod === kodKutusu.value;
+    if (!sonCalisma) {
+      ic.innerHTML = `<div class="kart"><h3>Program hazır ✓</h3>
+        <p>Kodun 4 istasyondan da hatasız geçti. Çalıştırmak için <b>▶ Çalıştır</b>'a bas (ya da Ctrl + Enter).</p></div>`
+        + girdiKutusu();
+      girdiKutusunuBagla();
+      return;
+    }
+    const bilgi = guncel
+      ? `<p class="aciklama">✓ Makine koduna derlendi ve ${sonCalisma.sure_ms} ms'de çalıştı.</p>`
+      : `<p class="aciklama">Kodun değişti; bu, <b>önceki</b> çalıştırmanın çıktısı. Yenisi için ▶ Çalıştır'a bas.</p>`;
+    const calismaHatasi = sonCalisma.calisma_hatasi
+      ? `<div class="kart hata"><h3>✗ Program çalışırken hata oluştu</h3><pre>${kacir(sonCalisma.calisma_hatasi)}</pre></div>`
+      : "";
+    ic.innerHTML = girdiKutusu() + bilgi +
+      `<div class="cikti ${guncel ? "" : "eski"}">${kacir(sonCalisma.cikti) || '<span class="bos-cikti">(program hiçbir şey yazdırmadı)</span>'}</div>` +
+      calismaHatasi;
+    girdiKutusunuBagla();
+    return;
+  }
+
+  if (seciliSekme === "llvm") {
+    const ir = sonSonuc.asamalar.llvm;
+    if (!ir) {
+      ic.innerHTML = hataKarti() || `<div class="kart"><p>Önce 1-3. istasyonların hatasız çalışması gerekiyor.</p></div>`;
+      return;
+    }
+    ic.innerHTML = `<p class="aciklama">Kodun bu <b>LLVM IR</b>'a çevrildi. clang bunu optimize edip makine koduna (.exe) dönüştürüyor.
+        <b>%t1, %t2…</b> ara sonuçları tutan kutular; <b>@"g.x"</b> ana programdaki x değişkeninin hafızadaki yeri;
+        <b>i64</b> = int, <b>double</b> = float, <b>i1</b> = bool, <b>ptr</b> = metin.</p>
+      <pre class="ir">${irRenkle(ir)}</pre>`;
+    return;
+  }
+
+  if (seciliSekme === "lexer") {
+    const tokenlar = sonSonuc.asamalar.lexer;
+    if (!tokenlar) { ic.innerHTML = hataKarti(); return; }
+    const gruplar = new Map();
+    for (const t of tokenlar) {
+      if (!gruplar.has(t.satir)) gruplar.set(t.satir, []);
+      gruplar.get(t.satir).push(t);
+    }
+    let html = `<p class="aciklama">Lexer kodunu bu kelimelere (token) ayırdı. Bir satıra tıklarsan editörde o satıra gidersin.</p>
+      <div class="lejant">
+        <span class="tk kw"><b>anahtar kelime</b></span><span class="tk isim"><b>İSİM</b></span>
+        <span class="tk sayi"><b>SAYI</b></span><span class="tk metin"><b>METİN</b></span>
+        <span class="tk isaret"><b>işaret</b></span><span class="tk ozel"><b>özel</b></span>
+      </div>`;
+    for (const [satir, liste] of gruplar) {
+      html += `<div class="token-satiri" data-satir="${satir}"><span class="no">satır ${satir}</span>
+        <div class="tokenlar">${liste.map(tokenCipi).join("")}</div></div>`;
+    }
+    ic.innerHTML = html;
+    ic.querySelectorAll(".token-satiri").forEach((el) =>
+      el.addEventListener("click", () => satiraGit(+el.dataset.satir)));
+    return;
+  }
+
+  if (seciliSekme === "parser") {
+    const agac = sonSonuc.asamalar.parser;
+    if (!agac) {
+      ic.innerHTML = hataKarti() || `<div class="kart"><p>Önce 1. istasyonun hatasız çalışması gerekiyor.</p></div>`;
+      return;
+    }
+    ic.innerHTML = `<p class="aciklama">Parser kelimeleri bu <b>ağaca</b> dönüştürdü. Ağaçta <b>daha derinde</b> olan işlem
+        <b>önce</b> yapılır. Bir düğüme tıklarsan editörde o satıra gidersin.</p>
+      <ul class="agac kok">${dugumHtml(agac)}</ul>`;
+    ic.querySelectorAll(".dugum").forEach((el) =>
+      el.addEventListener("click", () => satiraGit(+el.dataset.satir)));
+    return;
+  }
+
+  if (seciliSekme === "tipler") {
+    const r = sonSonuc.asamalar.tipler;
+    if (!r) {
+      ic.innerHTML = hataKarti() || `<div class="kart"><p>Önce 1. ve 2. istasyonun hatasız çalışması gerekiyor.</p></div>`;
+      return;
+    }
+    const fonksiyonlar = r.fonksiyonlar.length
+      ? r.fonksiyonlar.map((f) => `<tr data-satir="${f.satir}"><td class="kod">${kacir(f.imza)}</td><td class="satirno">satır ${f.satir}</td></tr>`).join("")
+      : `<tr><td class="bos">Hiç fonksiyon yok</td></tr>`;
+    const kapsamlar = r.kapsamlar.map((k) => `
+      <div class="kapsam">
+        <h4>${kacir(k.ad)}</h4>
+        <table>
+          ${k.degiskenler.length ? `<tr><th>ad</th><th>tip</th><th>tür</th><th></th></tr>` : ""}
+          ${k.degiskenler.map((d) => `<tr data-satir="${d.satir}">
+              <td class="kod">${kacir(d.ad)}</td>
+              <td class="kod tip">${kacir(d.tip)}</td>
+              <td><span class="rozet r-${d.tur.replace(/[^a-z]/g, "")}">${kacir(d.tur)}</span></td>
+              <td class="satirno">satır ${d.satir}</td></tr>`).join("") || `<tr><td class="bos">Değişken yok</td></tr>`}
+        </table>
+      </div>`).join("");
+    ic.innerHTML = `
+      <div class="kart" style="border-color: var(--ok)"><h3 style="color: var(--ok)">✓ Tip hatası yok</h3>
+        <p>Her değişkenin tipi belli. Program çalışmadan önce bilinen bu bilgi, makine kodunun hızlı olmasının sırrı.</p></div>
+      <div class="kapsam"><h4>Fonksiyonlar</h4><table>${fonksiyonlar}</table></div>
+      <p class="aciklama">Her fonksiyonun kendi <b>kapsamı</b> var: sadece kendi listesindeki değişkenleri görebilir.</p>
+      ${kapsamlar}`;
+    ic.querySelectorAll("tr[data-satir]").forEach((el) =>
+      el.addEventListener("click", () => satiraGit(+el.dataset.satir)));
+    return;
+  }
+
+  const bilgi = {
+    tipler: "Tip kontrolü yazılınca burada her değişkenin <b>tipini</b> (int, metin...) ve tip hatalarını göreceksin.",
+    llvm: "Kod üretici yazılınca burada kodunun dönüştüğü <b>LLVM IR</b>'ı, yani makine koduna giden son adımı göreceksin.",
+  };
+  ic.innerHTML = `<div class="kart"><h3>Bu istasyon henüz yapılmadı</h3><p>${bilgi[seciliSekme]}</p></div>`;
+}
+
+// ---------- Program girdisi: input() için klavye yerine ----------
+let programGirdisi = "";
+try { programGirdisi = localStorage.getItem("vash-girdi") || ""; } catch (e) {}
+
+function girdiKutusu() {
+  if (!/\binput\s*\(/.test(kodKutusu.value)) return "";     // program input kullanmıyorsa gösterme
+  return `<div class="girdi-alani">
+      <label for="programGirdisi">⌨️ Program girdisi <span>— her satır, bir input() sorusuna cevap</span></label>
+      <textarea id="programGirdisi" rows="4" spellcheck="false" placeholder="Ali&#10;70&#10;1.75">${kacir(programGirdisi)}</textarea>
+    </div>`;
+}
+
+function girdiKutusunuBagla() {
+  const kutu = document.getElementById("programGirdisi");
+  if (!kutu) return;
+  kutu.addEventListener("input", () => {
+    programGirdisi = kutu.value;
+    try { localStorage.setItem("vash-girdi", programGirdisi); } catch (e) {}
+  });
+}
+
+// LLVM IR'ı okunur olsun diye renklendir
+const IR_PARCA = new RegExp([
+  /(;.*$)/.source,                                   // 1: yorum
+  /(c"[^"]*")/.source,                               // 2: metin sabiti
+  /(%"[^"]*"|%[A-Za-z_.][\w.]*)/.source,             // 3: yerel kutu / değişken
+  /(@"[^"]*"|@[A-Za-z_.][\w.]*)/.source,             // 4: global
+  /\b(define|declare|call|ret|store|load|alloca|br|label|add|sub|mul|fadd|fsub|fmul|fdiv|fneg|sdiv|srem|icmp|fcmp|sitofp|zext|xor|and|select|getelementptr|unreachable|internal|private|global|constant|unnamed_addr|noreturn)\b/.source, // 5
+  /\b(i64|i32|i8|i1|double|ptr|void)\b/.source,      // 6: tip
+  /^([A-Za-z_][\w.]*:)/.source,                      // 7: blok etiketi
+].join("|"), "g");
+const IR_SINIF = [null, "ir-yorum", "ir-metin", "ir-yerel", "ir-global", "ir-komut", "ir-tip", "ir-etiket"];
+
+// Tek geçişte: her satırı parçalara ayır, her parçayı kendi rengine boya
+function irRenkle(ir) {
+  return ir.split("\n").map((satir) => {
+    let html = "", son = 0, m;
+    IR_PARCA.lastIndex = 0;
+    while ((m = IR_PARCA.exec(satir)) !== null) {
+      if (m[0] === "") { IR_PARCA.lastIndex++; continue; }
+      const grup = m.findIndex((g, i) => i > 0 && g !== undefined);
+      html += kacir(satir.slice(son, m.index)) + `<span class="${IR_SINIF[grup]}">${kacir(m[0])}</span>`;
+      son = m.index + m[0].length;
+    }
+    return html + kacir(satir.slice(son));
+  }).join("\n");
+}
+
+// Ağacın bir düğümünü (ve altındakileri) HTML'e çevir
+const DUGUM_RENGI = {
+  "Program": "d-program", "DeğişkenTanımı": "d-komut", "GlobalDeğişken": "d-komut", "Use": "d-komut",
+  "Atama": "d-komut", "Ondalık": "d-sayi", "Bool": "d-sayi",
+  "If": "d-fn", "Doğruysa": "d-program", "Değilse": "d-program",
+  "Repeat": "d-fn", "Repeat while": "d-fn", "Stop": "d-komut", "Skip": "d-komut",
+  "Eleman": "d-islem", "Özellik": "d-islem", "Metot": "d-cagri", "ElemanAtama": "d-komut",
+  "When": "d-fn", "Olunca": "d-program",
+  "Tip": "d-fn", "Alan": "d-isim", "AlanAtama": "d-komut",
+  "FonksiyonTanımı": "d-fn", "Dönüş": "d-komut", "Çağrı": "d-cagri",
+  "İşlem": "d-islem", "Sayı": "d-sayi", "Metin": "d-metin", "Değişken": "d-isim", "Liste": "d-islem",
+};
+function dugumHtml(d) {
+  const bilgi = d.bilgi ? ` <span class="d-bilgi">${kacir(d.bilgi)}</span>` : "";
+  const cocuklar = d.cocuklar.length ? `<ul class="agac">${d.cocuklar.map(dugumHtml).join("")}</ul>` : "";
+  return `<li><span class="dugum ${DUGUM_RENGI[d.etiket] || ""}" data-satir="${d.satir || 1}">
+            <b>${kacir(d.etiket)}</b>${bilgi}</span>${cocuklar}</li>`;
+}
+
+function tokenCipi(t) {
+  let sinif = "isaret";
+  if (t.tur === "İSİM") sinif = "isim";
+  else if (t.tur === "SAYI" || t.tur === "ONDALIK") sinif = "sayi";
+  else if (t.tur === "METİN") sinif = "metin";
+  else if (t.tur === "YENİ_SATIR" || t.tur === "SON") sinif = "ozel";
+  else if (/^[a-z]+$/.test(t.tur)) sinif = "kw";
+  const deger = t.deger === null ? "" : `<i>${kacir(JSON.stringify(t.deger))}</i>`;
+  return `<span class="tk ${sinif}" title="sütun ${t.sutun}"><b>${kacir(t.tur)}</b>${deger}</span>`;
+}
+
+function satiraGit(n) {
+  const satirlar = kodKutusu.value.split("\n");
+  let bas = 0;
+  for (let i = 0; i < n - 1 && i < satirlar.length; i++) bas += satirlar[i].length + 1;
+  const son = bas + (satirlar[n - 1] || "").length;
+  kodKutusu.focus();
+  kodKutusu.setSelectionRange(bas, son);
+  kodKutusu.scrollTop = Math.max(0, (n - 5) * 22);
+  konumuGoster();
+}
+
+// =====================================================================
+//  EDİTÖR DAVRANIŞLARI
+// =====================================================================
+function metinEkle(m) {
+  // execCommand, Ctrl+Z ile geri alınabilsin diye
+  if (!document.execCommand("insertText", false, m)) kodKutusu.setRangeText(m, kodKutusu.selectionStart, kodKutusu.selectionEnd, "end");
+}
+
+let bekleme = null;
+kodKutusu.addEventListener("input", () => {
+  editoruCiz();
+  clearTimeout(bekleme);
+  bekleme = setTimeout(derle, 350);   // yazmayı bırakınca otomatik kontrol et
+});
+kodKutusu.addEventListener("scroll", kaydirmayiEsitle);
+["click", "keyup", "select"].forEach((o) => kodKutusu.addEventListener(o, konumuGoster));
+
+kodKutusu.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault(); seciliSekme = "cikti"; derle(true); return;
+  }
+  if (e.key === "Tab") {            // Tab tuşu 4 boşluk eklesin
+    e.preventDefault(); metinEkle("    "); return;
+  }
+  if (e.key === "Enter") {          // yeni satırda girintiyi koru, "{" sonrası içeri gir
+    e.preventDefault();
+    const once = kodKutusu.value.slice(0, kodKutusu.selectionStart);
+    const satir = once.slice(once.lastIndexOf("\n") + 1);
+    let girinti = satir.match(/^ */)[0];
+    if (satir.trimEnd().endsWith("{")) girinti += "    ";
+    metinEkle("\n" + girinti);
+    return;
+  }
+  if (e.key === "}") {              // "}" yazınca bir seviye dışarı çık
+    const once = kodKutusu.value.slice(0, kodKutusu.selectionStart);
+    const satir = once.slice(once.lastIndexOf("\n") + 1);
+    if (/^ {4,}$/.test(satir)) {
+      e.preventDefault();
+      kodKutusu.setSelectionRange(kodKutusu.selectionStart - 4, kodKutusu.selectionStart);
+      metinEkle("}");
+    }
+  }
+});
+
+$("calistir").addEventListener("click", () => { seciliSekme = "cikti"; derle(true); });
+
+// =====================================================================
+//  ÖRNEKLER
+// =====================================================================
+async function ornekleriYukle() {
+  try {
+    const adlar = await (await fetch("/ornekler")).json();
+    for (const ad of adlar) {
+      const o = document.createElement("option");
+      o.value = ad; o.textContent = ad;
+      $("ornekSecici").appendChild(o);
+    }
+    return adlar;
+  } catch (e) { return []; }
+}
+
+async function ornegiAc(ad) {
+  const veri = await (await fetch("/ornek/" + encodeURIComponent(ad))).json();
+  kodKutusu.value = veri.kod;
+  editoruCiz();
+  derle();
+}
+
+$("ornekSecici").addEventListener("change", (e) => {
+  if (e.target.value) ornegiAc(e.target.value);
+  e.target.value = "";
+});
+
+// =====================================================================
+//  BAŞLANGIÇ
+// =====================================================================
+(async () => {
+  bandiCiz();
+  const adlar = await ornekleriYukle();
+  let kayitli = null;
+  try { kayitli = localStorage.getItem(KAYIT_ANAHTARI); } catch (e) {}
+  if (kayitli) {
+    kodKutusu.value = kayitli;
+    editoruCiz();
+    derle();
+  } else if (adlar.includes("ilk.vash")) {
+    await ornegiAc("ilk.vash");
+  } else {
+    editoruCiz();
+    derle();
+  }
+})();
+</script>
+</body>
+</html>

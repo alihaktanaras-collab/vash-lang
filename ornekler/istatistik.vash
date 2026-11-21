@@ -1,0 +1,34 @@
+# istatistik.vash — sayı listeleriyle küçük hesaplar
+# C'nin karekök fonksiyonunu GİZLİ olarak tanıtıyor (_sqrt), dışarıya kendi güvenli fonksiyonunu açıyor.
+
+extern "msvcrt" {
+    fn _sqrt(x: float) -> float        # '_' ile başladığı için gizli; C'deki adı: sqrt
+}
+
+fn karekok(x: float) -> float {
+    if x < 0 {
+        return 0.0                     # C'ye eksi sayı verilirse saçma bir sonuç döner; biz korunuyoruz
+    }
+    return _sqrt(x)
+}
+
+fn ortalama(sayilar: [float]) -> float {
+    if sayilar.length is 0 {
+        return 0.0
+    }
+    var toplam = 0.0
+    repeat i from 1 to sayilar.length {
+        toplam = toplam + sayilar[i]
+    }
+    return toplam / sayilar.length
+}
+
+fn standart_sapma(sayilar: [float]) -> float {
+    var ort = ortalama(sayilar)
+    var toplam = 0.0
+    repeat i from 1 to sayilar.length {
+        var fark = sayilar[i] - ort
+        toplam = toplam + fark * fark
+    }
+    return karekok(toplam / sayilar.length)
+}

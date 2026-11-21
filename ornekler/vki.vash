@@ -1,0 +1,23 @@
+# Vücut kitle indeksi hesaplayıcı (klavyeden okur)
+# Terminalde çalıştır:  .\vash run ornekler\vki.vash
+
+var ad = input("Adın: ")
+var kilo: float = input("Kilon (kg): ")      # float bekleniyor → sayı ister
+var boy: float = input("Boyun (m): ")        # yanlış girilirse tekrar sorar
+var yas: int = input("Yaşın: ")
+
+var vki = kilo / (boy * boy)
+print("Merhaba {ad}! Vücut kitle indeksin:", vki)
+
+if vki < 18.5 {
+    print("Zayıf")
+} else if vki < 25 {
+    print("Normal")
+} else if vki < 30 {
+    print("Fazla kilolu")
+} else {
+    print("Obez")
+}
+if yas < 18 {
+    print("(18 yaş altı için değerlendirme farklıdır)")
+}

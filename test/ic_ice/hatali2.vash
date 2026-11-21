@@ -1,0 +1,4 @@
+var l = [[1, 2], [3]]
+parallel repeat i from 1 to 2 {
+    l[i][1] = 5
+}

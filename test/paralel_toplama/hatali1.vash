@@ -1,0 +1,5 @@
+var toplam = 0
+parallel repeat i from 1 to 100 {
+    toplam = toplam + i
+    print(toplam)
+}

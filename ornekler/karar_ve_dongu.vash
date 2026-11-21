@@ -1,0 +1,111 @@
+# if / else ve döngüler
+
+# --- Karar verme ---
+fn harf_notu(puan: int) -> text {
+    if puan >= 90 {
+        return "A"
+    } else if puan >= 70 {
+        return "B"
+    } else {
+        return "C"
+    }
+}
+
+print("95 →", harf_notu(95), "  75 →", harf_notu(75), "  40 →", harf_notu(40))
+
+var yas = 16
+if yas >= 13 and yas <= 19 {
+    print("{yas} yaş: genç")
+}
+if not (yas >= 18) {
+    print("Henüz reşit değil")
+}
+
+# --- repeat N ---
+repeat 3 {
+    write("merhaba ")
+}
+print()
+
+# --- repeat from / to / step ---
+write("1'den 5'e:     ")
+repeat i from 1 to 5 {
+    write(i, "")
+}
+print()
+
+write("2'şer 2'şer:   ")
+repeat i from 0 to 10 step 2 {
+    write(i, "")
+}
+print()
+
+write("Geri sayım:    ")
+repeat i from 5 to 1 step -1 {
+    write(i, "")
+}
+print("🚀")
+
+var kisi_sayisi = 0
+repeat i from 1 to kisi_sayisi {
+    print("Bu satır hiç yazılmamalı!")
+}
+
+# --- repeat while ---
+var can = 3
+repeat while can > 0 {
+    print("Can:", can)
+    can = can - 1
+}
+
+# --- stop / skip ---
+write("Tek sayılar (7'de dur): ")
+repeat i from 1 to 100 {
+    if i is 9 {
+        stop
+    }
+    if i % 2 is 0 {
+        skip
+    }
+    write(i, "")
+}
+print()
+
+# --- İç içe döngü: çarpım tablosu ---
+repeat satir from 1 to 3 {
+    repeat sutun from 1 to 3 {
+        write(satir * sutun, " ")
+    }
+    print()
+}
+
+# --- Asal sayılar ---
+fn asal_mi(n: int) -> bool {
+    if n < 2 {
+        return false
+    }
+    var bolen = 2
+    repeat while bolen * bolen <= n {
+        if n % bolen is 0 {
+            return false
+        }
+        bolen = bolen + 1
+    }
+    return true
+}
+
+write("50'ye kadar asallar:")
+repeat i from 1 to 50 {
+    if asal_mi(i) {
+        write("", i)
+    }
+}
+print()
+
+# Kısa devre: x 0 iken sağ taraf hiç hesaplanmaz, sıfıra bölme olmaz
+var x = 0
+if x is not 0 and 10 // x > 1 {
+    print("olmaz")
+} else {
+    print("Kısa devre çalıştı, sıfıra bölme olmadı ✓")
+}

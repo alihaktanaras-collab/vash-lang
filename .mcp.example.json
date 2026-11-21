@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vash-kum": {
+      "command": "python",
+      "args": ["araclar/vash_kum_mcp.py"]
+    },
+    "vash-engine": {
+      "command": "python",
+      "args": ["vash_engine/araclar/vash_mcp.py"]
+    }
+  }
+}

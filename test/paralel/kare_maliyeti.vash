@@ -1,0 +1,19 @@
+# Bir parallel çağrısının "kendi maliyeti": oyunlar her karede çağırır, bu yüzden küçük olmalı.
+# 10000 kez küçük bir parallel repeat çalıştırılır.
+
+var konumlar: [float] = []
+var hizlar: [float] = []
+repeat i from 1 to 1000 {
+    konumlar.add(i * 1.0)
+    hizlar.add(0.5)
+}
+
+var sure = measure {
+    repeat kare from 1 to 10000 {
+        parallel repeat i from 1 to konumlar.length {
+            konumlar[i] = konumlar[i] + hizlar[i]
+        }
+    }
+}
+print("ilk konum:", konumlar[1], "son konum:", konumlar[1000])
+print("bir parallel çağrısı ortalama:", sure / 10000.0 * 1000000.0, "mikrosaniye")

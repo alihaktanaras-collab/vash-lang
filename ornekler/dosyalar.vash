@@ -1,0 +1,44 @@
+# Dosyalar: read_file, read_lines, write_file, append_file, file_exists
+# Fonksiyonların içinde kullanılınca 'use files' izni gerekir (ana program her şeye izinli).
+# Okunamayan dosya none döner: Vash, kontrol etmeyi unutmana izin vermez.
+
+var dosya = "öğrenci_notları.txt"
+
+# --- 1) Yaz ---
+fn notlari_kaydet(dosya: text, notlar: {text: int}) -> bool {
+    use files
+    var satirlar: [text] = []
+    var adlar = notlar.keys()
+    repeat i from 1 to adlar.length {
+        satirlar.add("{adlar[i]},{notlar[adlar[i]]}\n")
+    }
+    return write_file(dosya, satirlar.join(""))
+}
+
+if notlari_kaydet(dosya, {"Ayşe": 91, "Çağrı": 78, "Ümit": 64}) {
+    print("Notlar '{dosya}' dosyasına yazıldı.")
+}
+append_file(dosya, "Şule,88\n")              # sonuna bir satır ekle
+
+# --- 2) Satır satır oku ---
+var satirlar = read_lines(dosya)
+if satirlar is not none {
+    var toplam = 0
+    repeat i from 1 to satirlar.length {
+        var parca = satirlar[i].split(",")
+        print("  {parca[1]}: {parca[2]}")
+        toplam = toplam + int(parca[2], else: 0)
+    }
+    print("Ortalama:", toplam / satirlar.length)
+}
+
+# --- 3) Tamamını oku ---
+var hepsi = read_file(dosya) else: ""
+print("Dosya {hepsi.length} harf, {hepsi.split("\n").length} satır.")
+
+# --- 4) Olmayan dosya ---
+print("ayarlar.txt var mı?", file_exists("ayarlar.txt"))
+var ayar = read_file("ayarlar.txt")
+if ayar is none {
+    print("ayarlar.txt yok, varsayılan ayarlar kullanılıyor.")
+}

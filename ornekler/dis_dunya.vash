@@ -1,0 +1,60 @@
+# Metin işleri, rastgele sayılar, süre ölçme ve çevirme
+
+# ===== 1) Metin analizi: CSV benzeri bir satırı işlemek =====
+var satir = "  Ayşe, 87 ,Mehmet,abc, Çiğdem ,92  "
+var parcalar = satir.split(",")
+print("Parça sayısı:", parcalar.length)
+var toplam = 0
+var sayi_adedi = 0
+repeat i from 1 to parcalar.length {
+    var p = parcalar[i].trim()
+    var n = int(p, else: -1)               # sayı değilse -1
+    if n is not -1 {
+        toplam = toplam + n
+        sayi_adedi = sayi_adedi + 1
+    } else {
+        print("  isim: '{p}' →", p.length, "harf")
+    }
+}
+print("Sayıların ortalaması:", toplam / sayi_adedi)
+print("'çiçek' kaç harf?", "çiçek".length, "  (C/Go/Rust'ta 7 çıkar)")
+print("İçinde 'Mehmet' var mı?", satir.contains("Mehmet"))
+
+# ===== 2) Rastgele: zar istatistiği =====
+var sayilar = [0, 0, 0, 0, 0, 0]
+var atis = 600000
+repeat atis {
+    var zar = random(1 to 6)
+    sayilar[zar] = sayilar[zar] + 1
+}
+print("600.000 zar atışında her yüzün gelme sayısı:", sayilar)
+var renkler = ["kırmızı", "mavi", "yeşil"]
+print("Rastgele renk:", random(renkler), "  rastgele oran:", random(0.0 to 1.0) < 1.0)
+
+# ===== 3) Süre ölçme =====
+fn asal_say(n: int) -> int {
+    var adet = 0
+    repeat i from 2 to n {
+        var asal = true
+        var b = 2
+        repeat while b * b <= i {
+            if i % b is 0 {
+                asal = false
+                stop
+            }
+            b = b + 1
+        }
+        if asal {
+            adet = adet + 1
+        }
+    }
+    return adet
+}
+var sonuc = 0
+var sure = measure {
+    sonuc = asal_say(1000000)
+}
+print("1.000.000'a kadar", sonuc, "asal,", int(sure * 1000), "ms sürdü")
+
+# ===== 4) Çevirme =====
+print(int("42") + 1, float("2.5") * 2, text(7), int(3.99), float(3))

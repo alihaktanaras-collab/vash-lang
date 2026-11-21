@@ -1,0 +1,652 @@
+# =====================================================================
+#  MODÜLLER (dosyaları birleştirme) — Vash ile yazılmış hâli
+# =====================================================================
+#  Python'daki derleyici/moduller.py'nin karşılığı.
+#
+#      # geometri.vash                     # ana.vash
+#      fn alan(r: float) -> float {...}    import geometri
+#                                          print(geometri.alan(2.0))
+#
+#  1) "import geometri" görünce aynı klasördeki geometri.vash dosyasını bulur ve okur
+#  2) geometri.vash'taki her şeyin adının önüne "geometri." ekler (alan → geometri.alan)
+#  3) ana dosyadaki "geometri.alan(...)" yazılarını "geometri.alan" çağrısına çevirir
+#  4) hepsini tek bir program gibi birleştirir; tip kontrolü modül diye bir şey bilmez
+#
+#  Kurallar: başka dosyadaki şeyler dosya adıyla kullanılır; '_' ile başlayan adlar gizlidir;
+#  içe alınan dosyada sadece tanımlar olur (fn, type, enum, extern, global var, import).
+# =====================================================================
+
+import lexer
+import parser
+import oneri
+import dil
+
+type Modul {
+    ad: text
+    fonksiyonlar: [text]
+    tipler: [text]
+    enumlar: [text]
+    globaller: [text]
+    importlar: [parser.Dugum]
+    program: [parser.Dugum]
+}
+
+# Bir dosyanın "bakış açısı": hangi modülün içindeyiz, hangi modülleri görüyoruz
+type Baglam {
+    kendi: text                 # "" = ana program
+    gorunen: [text]
+}
+
+enum Sonuc {
+    Tamam(agac: parser.Dugum)
+    Hata(mesaj: text)
+}
+
+global var HATA = ""
+global var MODULLER: {text: Modul} = {}
+global var SIRA: [text] = []
+global var BAGLAMLAR: {text: Baglam} = {}    # dosya adı → bakış açısı (metinlerin içindeki \{…\} için)
+global var KLASOR = ""
+global var STD_KLASORU = ""                  # standart kütüphanenin klasörü (vash komutu ayarlar)
+
+# Kum havuzu: standart kütüphanedeki modüller her zaman oradan yüklenir (aynı adlı sahte dosya kullanılamaz)
+global var KUM = false
+global var STD_DOSYALARI: [text] = []
+
+fn kum_ayarla(acik: bool) {
+    use change KUM
+    KUM = acik
+}
+
+fn std_dosyalari() -> [text] {
+    use STD_DOSYALARI
+    return STD_DOSYALARI
+}
+
+fn std_klasoru_ayarla(yol: text) {
+    use change STD_KLASORU
+    STD_KLASORU = yol
+}
+global var KENDI = ""
+global var GORUNEN: [text] = []
+
+# ---------------------------------------------------------------------
+#  Düzenli ifadeler: metin.find(desen) gibi işler std/regex.vash'a gider
+# ---------------------------------------------------------------------
+#  Bu işlerden biri kullanılırsa regex modülü kendiliğinden yüklenir.
+#  Desen düz bir yazıysa ("\\d+" gibi) program açılırken bir kere çözülür:
+#      global var _regex_1 = regex._compile("\\d+")       ← dosyanın başına eklenir
+#      satir.find("\\d+")   →   satir.find("\\d+", __regex: _regex_1)
+#  Tip kontrolü metnin işi olduğunu görünce bunu regex._find_p(satir, _regex_1) çağrısına çevirir.
+global var REGEX_GEREK = false
+global var REGEX_SAYAC = 0
+global var REGEX_GLOBALLER: [parser.Dugum] = []
+
+fn _regex_metodu_mu(ad: text) -> bool {
+    return ad is "matches" or ad is "find" or ad is "find_all" or ad is "replace_pattern"
+}
+
+fn _regex_var_mi(d: parser.Dugum) -> bool {
+    if d.tur is "MetotCagrisi" and _regex_metodu_mu(d.deger) {
+        return true
+    }
+    repeat i from 1 to d.cocuklar.length {
+        if _regex_var_mi(d.cocuklar[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+fn _regex_gez(d: parser.Dugum) -> parser.Dugum {
+    use change REGEX_SAYAC
+    use change REGEX_GLOBALLER
+    var cocuklar: [parser.Dugum] = []
+    repeat i from 1 to d.cocuklar.length {
+        cocuklar.add(_regex_gez(d.cocuklar[i]))
+    }
+    if d.tur is "MetotCagrisi" and _regex_metodu_mu(d.deger) {
+        var argumanlar = cocuklar[2].cocuklar
+        if argumanlar.length >= 1 and argumanlar[1].tur is "Metin" and not argumanlar[1].deger.contains("\{") {
+            REGEX_SAYAC = REGEX_SAYAC + 1
+            var ad = "_regex_{REGEX_SAYAC}"
+            var desen = argumanlar[1]
+            var bos_liste: [parser.Dugum] = []
+            var cagri = parser.Dugum(tur: "Cagri", deger: "regex._compile", ek: "", cocuklar: [_dugum_listesi([desen]), _dugum_listesi(bos_liste)], satir: desen.satir, sutun: desen.sutun, dosya: desen.dosya)
+            var bos = parser.Dugum(tur: "Bos", deger: "", ek: "", cocuklar: bos_liste, satir: 0, sutun: 0, dosya: desen.dosya)
+            REGEX_GLOBALLER.add(parser.Dugum(tur: "DegiskenTanimi", deger: ad, ek: "global", cocuklar: [bos, cagri], satir: desen.satir, sutun: desen.sutun, dosya: desen.dosya))
+            var isim = parser.Dugum(tur: "Isim", deger: ad, ek: "", cocuklar: bos_liste, satir: desen.satir, sutun: desen.sutun, dosya: desen.dosya)
+            var isimli = cocuklar[4].cocuklar
+            isimli.add(parser.Dugum(tur: "Isimli", deger: "__regex", ek: "", cocuklar: [isim], satir: desen.satir, sutun: desen.sutun, dosya: desen.dosya))
+            cocuklar[4] = _dugum_listesi(isimli)
+        }
+    }
+    return parser.Dugum(tur: d.tur, deger: d.deger, ek: d.ek, cocuklar: cocuklar, satir: d.satir, sutun: d.sutun, dosya: d.dosya)
+}
+
+fn _dugum_listesi(cocuklar: [parser.Dugum]) -> parser.Dugum {
+    return parser.Dugum(tur: "[]", deger: "", ek: "", cocuklar: cocuklar, satir: 0, sutun: 0)
+}
+
+# Bir dosyanın komutları: regex işi yoksa olduğu gibi; varsa desenler başa global olarak eklenir
+fn _regex_dosya(komutlar: [parser.Dugum]) -> [parser.Dugum] {
+    use change REGEX_GEREK
+    use change REGEX_SAYAC
+    use change REGEX_GLOBALLER
+    var var_mi = false
+    repeat i from 1 to komutlar.length {
+        if not var_mi and _regex_var_mi(komutlar[i]) {
+            var_mi = true
+        }
+    }
+    if not var_mi {
+        return komutlar
+    }
+    REGEX_GEREK = true
+    REGEX_GLOBALLER = []
+    var yeni: [parser.Dugum] = []
+    repeat i from 1 to komutlar.length {
+        yeni.add(_regex_gez(komutlar[i]))
+    }
+    var sonuc = REGEX_GLOBALLER
+    repeat i from 1 to yeni.length {
+        sonuc.add(yeni[i])
+    }
+    return sonuc
+}
+global var IZIN_ADLARI = ["files", "net", "system", "screen", "sound", "time"]
+
+# ---------------------------------------------------------------------
+#  Yardımcılar
+# ---------------------------------------------------------------------
+fn _tamam() -> bool {
+    return HATA.length is 0
+}
+
+fn _hata(d: parser.Dugum, mesaj: text) {
+    use change HATA
+    if HATA.length is 0 {
+        var yer = ""
+        if d.dosya.length > 0 {
+            yer = "{d.dosya}, "
+        }
+        HATA = dil.sec("{yer}Satır {d.satir}, sütun {d.sutun}: {mesaj}", "{yer}Line {d.satir}, column {d.sutun}: {mesaj}")
+    }
+}
+
+fn _hata_ham(mesaj: text) {
+    use change HATA
+    if HATA.length is 0 {
+        HATA = mesaj
+    }
+}
+
+fn _icinde(ad: text, liste: [text]) -> bool {
+    repeat i from 1 to liste.length {
+        if liste[i] is ad {
+            return true
+        }
+    }
+    return false
+}
+
+fn _ekle(a: [text], b: [text]) -> [text] {
+    var s = a
+    repeat i from 1 to b.length {
+        s.add(b[i])
+    }
+    return s
+}
+
+fn _hepsi(m: Modul) -> [text] {
+    return _ekle(_ekle(_ekle(m.fonksiyonlar, m.tipler), m.enumlar), m.globaller)
+}
+
+fn _kopya(d: parser.Dugum, deger: text, ek: text, cocuklar: [parser.Dugum]) -> parser.Dugum {
+    return parser.Dugum(tur: d.tur, deger: deger, ek: ek, cocuklar: cocuklar, satir: d.satir, sutun: d.sutun, tip: d.tip, dosya: d.dosya)
+}
+
+# Hata mesajları hangi dosyada olduğunu söyleyebilsin diye her düğüme dosya adını yaz
+fn dosya_isaretle(d: parser.Dugum, dosya: text) -> parser.Dugum {
+    var cocuklar: [parser.Dugum] = []
+    repeat i from 1 to d.cocuklar.length {
+        cocuklar.add(dosya_isaretle(d.cocuklar[i], dosya))
+    }
+    return parser.Dugum(tur: d.tur, deger: d.deger, ek: d.ek, cocuklar: cocuklar, satir: d.satir, sutun: d.sutun, tip: d.tip, dosya: dosya)
+}
+
+# En dışarıda olmayan bir import var mı? (import sadece dosyanın en dışında yazılabilir)
+fn _ic_import(d: parser.Dugum, ust: bool) -> parser.Dugum? {
+    if d.tur is "ImportKomutu" and not ust {
+        return d
+    }
+    repeat i from 1 to d.cocuklar.length {
+        var x = _ic_import(d.cocuklar[i], false)
+        if x is not none {
+            return x
+        }
+    }
+    return none
+}
+
+fn _ic_importlari_denetle(komutlar: [parser.Dugum], mesaj: text) {
+    repeat i from 1 to komutlar.length {
+        var x = _ic_import(komutlar[i], true)
+        if x is not none {
+            _hata(x, mesaj)
+            return
+        }
+    }
+}
+
+# ---------------------------------------------------------------------
+#  Adları düzeltme
+# ---------------------------------------------------------------------
+# geometri.X  /  geometri.X(...)  → ne olduğuna göre yeni bir düğüm
+fn _modul_erisimi(d: parser.Dugum) -> parser.Dugum {
+    var m = MODULLER[d.cocuklar[1].deger]
+    var ad = d.deger
+    if ad.starts_with("_") {
+        _hata(d, dil.sec("'{m.ad}.{ad}' gizli: adı '_' ile başlayan şeyler sadece kendi dosyasında ({m.ad}.vash) kullanılabilir.", "'{m.ad}.{ad}' is private: names starting with '_' can only be used in their own file ({m.ad}.vash)."))
+        return d
+    }
+    var hepsi = _hepsi(m)
+    if not _icinde(ad, hepsi) {
+        var acik: [text] = []
+        repeat i from 1 to hepsi.length {
+            if not hepsi[i].starts_with("_") {
+                acik.add(hepsi[i])
+            }
+        }
+        _hata(d, dil.sec("'{m.ad}' modülünde '{ad}' diye bir şey yok.{oneri.oneri(ad, acik)}", "There is nothing called '{ad}' in module '{m.ad}'.{oneri.oneri(ad, acik)}"))
+        return d
+    }
+    var tam = "{m.ad}.{ad}"
+    if d.tur is "MetotCagrisi" {
+        if _icinde(ad, m.fonksiyonlar) or _icinde(ad, m.tipler) {      # geometri.alan(...) / geometri.Nokta(x: ...)
+            if d.cocuklar[3].tur is not "Bos" {
+                _hata(d, dil.sec("'{tam}(...)' içinde 'else:' kullanılamaz.", "'else:' can't be used inside '{tam}(...)'."))
+                return d
+            }
+            var argumanlar = _gez(d.cocuklar[2])
+            var isimli = _gez(d.cocuklar[4])
+            return parser.Dugum(tur: "Cagri", deger: tam, ek: "", cocuklar: [argumanlar, isimli], satir: d.satir, sutun: d.sutun, dosya: d.dosya)
+        }
+        var ne = dil.sec("bir enum", "an enum")
+        if _icinde(ad, m.globaller) {
+            ne = dil.sec("bir değişken", "a variable")
+        }
+        _hata(d, dil.sec("'{tam}' {ne}; çağrılamaz.", "'{tam}' is {ne}; it can't be called."))
+        return d
+    }
+    # geometri.PI / geometri.Odeme (ardından .Kart(...) gelir)
+    if _icinde(ad, m.globaller) or _icinde(ad, m.enumlar) {
+        return parser.Dugum(tur: "Isim", deger: tam, ek: "", cocuklar: [], satir: d.satir, sutun: d.sutun, dosya: d.dosya)
+    }
+    if _icinde(ad, m.fonksiyonlar) {
+        _hata(d, dil.sec("'{tam}' bir fonksiyon; çağırmak için parantez kullan:   {tam}(...)", "'{tam}' is a function; use parentheses to call it:   {tam}(...)"))
+        return d
+    }
+    _hata(d, dil.sec("'{tam}' bir tip; oluşturmak için alanlarıyla yaz:   {tam}(alan: ...)", "'{tam}' is a type; to create one, write it with its fields:   {tam}(field: ...)"))
+    return d
+}
+
+fn _gez(d: parser.Dugum) -> parser.Dugum {
+    if not _tamam() {
+        return d
+    }
+    var tur = d.tur
+    # Başka bir modüle erişim: geometri.alan(...) / geometri.PI
+    if (tur is "MetotCagrisi" or tur is "Ozellik") and d.cocuklar[1].tur is "Isim" and _icinde(d.cocuklar[1].deger, GORUNEN) {
+        return _modul_erisimi(d)
+    }
+    if tur is "AlanAtama" and d.cocuklar[1].tur is "Isim" and _icinde(d.cocuklar[1].deger, GORUNEN) {
+        _hata(d, dil.sec("'{d.cocuklar[1].deger}.{d.deger}' başka bir dosyanın değişkeni; dışarıdan değiştirilemez.", "'{d.cocuklar[1].deger}.{d.deger}' is a variable of another file; it can't be changed from outside."))
+        return d
+    }
+    # Modül adıyla aynı adda değişken olmasın (karışmasın)
+    var tanim = tur is "DegiskenTanimi" or tur is "Parametre"
+    if tanim and _icinde(d.deger, GORUNEN) {
+        _hata(d, dil.sec("'{d.deger}' içe alınan bir modülün adı; değişkene başka bir ad ver.", "'{d.deger}' is the name of an imported module; give the variable a different name."))
+        return d
+    }
+    if tanim and KENDI.length > 0 and _icinde(d.deger, MODULLER[KENDI].globaller) {
+        _hata(d, dil.sec("'{d.deger}' bu dosyanın global değişkeninin adı; yerel değişkene başka bir ad ver.", "'{d.deger}' is the name of a global variable in this file; give the local variable a different name."))
+        return d
+    }
+
+    # Önce içindekileri gez
+    var cocuklar: [parser.Dugum] = []
+    repeat i from 1 to d.cocuklar.length {
+        cocuklar.add(_gez(d.cocuklar[i]))
+        if not _tamam() {
+            return d
+        }
+    }
+    var deger = d.deger
+    var ek = d.ek
+
+    # Başka modülün tipi: geometri.Nokta
+    if tur is "TipAdi" and deger.split(".").length > 1 {
+        var parcalar = deger.split(".")
+        var mad = parcalar[1]
+        var kalan: [text] = []
+        repeat i from 2 to parcalar.length {
+            kalan.add(parcalar[i])
+        }
+        var ad = kalan.join(".")
+        if not _icinde(mad, GORUNEN) {
+            _hata(d, dil.sec("'{mad}' diye içe alınmış bir modül yok. Önce:   import {mad}", "No module called '{mad}' has been imported. First write:   import {mad}"))
+            return d
+        }
+        var m = MODULLER[mad]
+        if ad.starts_with("_") {
+            _hata(d, dil.sec("'{deger}' gizli: adı '_' ile başlayan şeyler sadece kendi dosyasında kullanılabilir.", "'{deger}' is private: names starting with '_' can only be used in their own file."))
+            return d
+        }
+        if not _icinde(ad, m.tipler) and not _icinde(ad, m.enumlar) {
+            _hata(d, dil.sec("'{mad}' modülünde '{ad}' diye bir tip yok.{oneri.oneri(ad, _ekle(m.tipler, m.enumlar))}", "There is no type called '{ad}' in module '{mad}'.{oneri.oneri(ad, _ekle(m.tipler, m.enumlar))}"))
+            return d
+        }
+    }
+
+    # Modülün kendi adları: alan → geometri.alan
+    if KENDI.length > 0 {
+        var k = MODULLER[KENDI]
+        if tur is "Cagri" and (_icinde(deger, k.fonksiyonlar) or _icinde(deger, k.tipler)) {
+            deger = "{KENDI}.{deger}"
+        } else if tur is "Isim" and (_icinde(deger, k.globaller) or _icinde(deger, k.enumlar)) {
+            deger = "{KENDI}.{deger}"
+        } else if tur is "Isim" and _icinde(deger, k.fonksiyonlar) {
+            ek = deger                                 # aynı adlı yerel değişken varsa tip kontrolü onu seçer
+            deger = "{KENDI}.{deger}"
+        } else if tur is "Atama" and _icinde(deger, k.globaller) {
+            deger = "{KENDI}.{deger}"
+        } else if tur is "TipAdi" and (_icinde(deger, k.tipler) or _icinde(deger, k.enumlar)) {
+            deger = "{KENDI}.{deger}"
+        } else if tur is "UseKomutu" and not _icinde(deger, IZIN_ADLARI) {
+            if not _icinde(deger, k.globaller) {
+                _hata(d, dil.sec("Modüldeki fonksiyonlar 'use' ile sadece kendi dosyalarının global değişkenlerini kullanabilir; '{deger}' {k.ad}.vash içinde yok.", "Functions in a module can only 'use' the global variables of their own file; '{deger}' is not in {k.ad}.vash."))
+                return d
+            }
+            deger = "{KENDI}.{deger}"
+        }
+    }
+    return _kopya(d, deger, ek, cocuklar)
+}
+
+# Tip kontrolü metinlerin içindeki {…} kısımlarını okurken çağırır: aynı düzeltmeler orada da yapılsın
+fn metin_duzelt(ic: parser.Dugum, dosya: text) -> parser.Dugum {
+    use change KENDI
+    use change GORUNEN
+    var sonuc = ic
+    if BAGLAMLAR.has(dosya) {
+        var b = BAGLAMLAR[dosya]
+        KENDI = b.kendi
+        GORUNEN = b.gorunen
+        sonuc = _gez(ic)
+    }
+    if dosya.length > 0 and _tamam() {
+        sonuc = dosya_isaretle(sonuc, dosya)
+    }
+    return sonuc
+}
+
+# ---------------------------------------------------------------------
+#  Dosyaları okuma
+# ---------------------------------------------------------------------
+fn _yukle(imp: parser.Dugum) {
+    use files
+    use change MODULLER
+    use change SIRA
+    var ad = imp.deger
+    if MODULLER.has(ad) {
+        return
+    }
+    var yol = "{ad}.vash"
+    if KLASOR.length > 0 {
+        yol = "{KLASOR}/{ad}.vash"
+    }
+    use change STD_DOSYALARI
+    var kod = read_file(yol)
+    var std_mi = false
+    if KUM and STD_KLASORU.length > 0 {
+        var std_kod = read_file("{STD_KLASORU}/{ad}.vash")
+        if std_kod is not none {
+            kod = std_kod
+            std_mi = true
+        }
+    }
+    if kod is none and STD_KLASORU.length > 0 {      # dosyanın yanında yoksa: standart kütüphane
+        kod = read_file("{STD_KLASORU}/{ad}.vash")
+        if kod is not none {
+            std_mi = true
+        }
+    }
+    if std_mi {
+        STD_DOSYALARI.add("{ad}.vash")
+    }
+    if kod is none {
+        _hata(imp, dil.sec("'{ad}' modülü bulunamadı: {ad}.vash dosyası aynı klasörde (ya da standart kütüphanede) olmalı.", "Module '{ad}' was not found: the file {ad}.vash must be in the same folder (or in the standard library)."))
+        return
+    }
+    var dosya = "{ad}.vash"
+    var program: [parser.Dugum] = []
+    match lexer.kelimelere_ayir(kod) {
+        Hata(mesaj) {
+            _hata_ham("{dosya}, {mesaj}")
+            return
+        }
+        Tamam(tokenlar) {
+            match parser.agac_kur(tokenlar) {
+                Hata(mesaj) {
+                    _hata_ham("{dosya}, {mesaj}")
+                    return
+                }
+                Tamam(agac) {
+                    program = _regex_dosya(dosya_isaretle(agac, dosya).cocuklar)
+                }
+            }
+        }
+    }
+    var fonksiyonlar: [text] = []
+    var tipler: [text] = []
+    var enumlar: [text] = []
+    var globaller: [text] = []
+    var importlar: [parser.Dugum] = []
+    # birbirini içe alan dosyalar sonsuz döngüye girmesin: hemen kaydet
+    MODULLER[ad] = Modul(ad: ad, fonksiyonlar: [], tipler: [], enumlar: [], globaller: [], importlar: [], program: program)
+    repeat i from 1 to program.length {
+        var k = program[i]
+        if k.tur is "FonksiyonTanimi" {
+            fonksiyonlar.add(k.deger)
+        } else if k.tur is "ExternBlok" {
+            var fler = k.cocuklar[1].cocuklar
+            repeat j from 1 to fler.length {
+                fonksiyonlar.add(fler[j].deger)
+            }
+            if k.cocuklar.length > 2 {               # extern içindeki C yapıları da bu dosyanın tipleri
+                var yapilar = k.cocuklar[3].cocuklar
+                repeat j from 1 to yapilar.length {
+                    tipler.add(yapilar[j].deger)
+                }
+            }
+        } else if k.tur is "TipTanimi" {
+            tipler.add(k.deger)
+        } else if k.tur is "EnumTanimi" {
+            enumlar.add(k.deger)
+        } else if k.tur is "DegiskenTanimi" and k.ek is "global" {
+            globaller.add(k.deger)
+        } else if k.tur is "ImportKomutu" {
+            importlar.add(k)
+        } else {
+            _hata(k, dil.sec("{dosya} içe alınan bir modül; içinde sadece tanımlar olabilir (fn, type, enum, extern, global var, import).\n   Çalışan kod (print, var, if, repeat...) ana programda olmalı.", "{dosya} is an imported module; it can only contain definitions (fn, type, enum, extern, global var, import).\n   Running code (print, var, if, repeat...) must be in the main program."))
+            return
+        }
+    }
+    var m = Modul(ad: ad, fonksiyonlar: fonksiyonlar, tipler: tipler, enumlar: enumlar, globaller: globaller, importlar: importlar, program: program)
+    MODULLER[ad] = m
+    _ic_importlari_denetle(program, dil.sec("'import' sadece dosyanın en dışında yazılabilir.", "'import' can only be written at the top level of a file."))
+    if not _tamam() {
+        return
+    }
+    repeat i from 1 to m.importlar.length {
+        _yukle(m.importlar[i])
+        if not _tamam() {
+            return
+        }
+    }
+    SIRA.add(ad)
+}
+
+fn _import_adlari(komutlar: [parser.Dugum]) -> [text] {
+    var adlar: [text] = []
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "ImportKomutu" {
+            adlar.add(komutlar[i].deger)
+        }
+    }
+    return adlar
+}
+
+# ---------------------------------------------------------------------
+#  Ana akış
+# ---------------------------------------------------------------------
+# Ana programın import'larını bul, modülleri oku, adlarını düzelt, hepsini tek programda birleştir.
+fn bagla(program: parser.Dugum, klasor: text) -> Sonuc {
+    use files
+    use change HATA
+    use change MODULLER
+    use change SIRA
+    use change BAGLAMLAR
+    use change KLASOR
+    use change KENDI
+    use change GORUNEN
+    use change REGEX_GEREK
+    use change REGEX_SAYAC
+    HATA = ""
+    MODULLER = {}
+    SIRA = []
+    BAGLAMLAR = {}
+    KLASOR = klasor
+    KENDI = ""
+    GORUNEN = []
+    REGEX_GEREK = false
+    REGEX_SAYAC = 0
+    var komutlar = program.cocuklar
+    _ic_importlari_denetle(komutlar, dil.sec("'import' sadece dosyanın en dışında yazılabilir (fonksiyonların ve blokların dışında).", "'import' can only be written at the top level of a file (outside functions and blocks)."))
+    if not _tamam() {
+        return Sonuc.Hata(mesaj: HATA)
+    }
+    komutlar = _regex_dosya(komutlar)
+    var ana_adlar = _import_adlari(komutlar)
+    if ana_adlar.length is 0 and not REGEX_GEREK {
+        return Sonuc.Tamam(agac: program)
+    }
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "ImportKomutu" {
+            _yukle(komutlar[i])
+            if not _tamam() {
+                return Sonuc.Hata(mesaj: HATA)
+            }
+        }
+    }
+    if REGEX_GEREK {                                 # metin.find(...) gibi işler: regex modülü kendiliğinden gelir
+        if not MODULLER.has("regex") {
+            var bos_liste: [parser.Dugum] = []
+            _yukle(parser.Dugum(tur: "ImportKomutu", deger: "regex", ek: "", cocuklar: bos_liste, satir: 1, sutun: 1, dosya: ""))
+            if not _tamam() {
+                return Sonuc.Hata(mesaj: HATA)
+            }
+        }
+        # regex en başta hazırlansın: diğer dosyaların desenleri program açılırken onun fonksiyonlarını kullanır
+        var yeni_sira = ["regex"]
+        repeat i from 1 to SIRA.length {
+            if SIRA[i] is not "regex" {
+                yeni_sira.add(SIRA[i])
+            }
+        }
+        SIRA = yeni_sira
+    }
+
+    # Adları düzelt: önce modüller (kendi adları + içe aldıkları), sonra ana program
+    repeat s from 1 to SIRA.length {
+        var m = MODULLER[SIRA[s]]
+        var yeni: [parser.Dugum] = []
+        repeat i from 1 to m.program.length {
+            var k = m.program[i]
+            if k.tur is "FonksiyonTanimi" or k.tur is "TipTanimi" or k.tur is "EnumTanimi" or k.tur is "DegiskenTanimi" {
+                k = _kopya(k, "{m.ad}.{k.deger}", k.ek, k.cocuklar)
+            } else if k.tur is "ExternBlok" {
+                var fler: [parser.Dugum] = []
+                var eski = k.cocuklar[1].cocuklar
+                repeat j from 1 to eski.length {
+                    # C'deki gerçek adı 'ek'te sakla
+                    fler.add(_kopya(eski[j], "{m.ad}.{eski[j].deger}", eski[j].deger, eski[j].cocuklar))
+                }
+                var cocuklar = [_kopya(k.cocuklar[1], "", "", fler), k.cocuklar[2]]
+                if k.cocuklar.length > 2 {
+                    var yapilar: [parser.Dugum] = []
+                    var eski_yapilar = k.cocuklar[3].cocuklar
+                    repeat j from 1 to eski_yapilar.length {
+                        yapilar.add(_kopya(eski_yapilar[j], "{m.ad}.{eski_yapilar[j].deger}", eski_yapilar[j].ek, eski_yapilar[j].cocuklar))
+                    }
+                    cocuklar.add(_kopya(k.cocuklar[3], "", "", yapilar))
+                }
+                k = _kopya(k, k.deger, k.ek, cocuklar)
+            }
+            yeni.add(k)
+        }
+        KENDI = m.ad
+        GORUNEN = _import_adlari(m.program)
+        BAGLAMLAR["{m.ad}.vash"] = Baglam(kendi: KENDI, gorunen: GORUNEN)
+        var gezilmis: [parser.Dugum] = []
+        repeat i from 1 to yeni.length {
+            gezilmis.add(_gez(yeni[i]))
+            if not _tamam() {
+                return Sonuc.Hata(mesaj: HATA)
+            }
+        }
+        m.program = gezilmis
+        MODULLER[SIRA[s]] = m
+    }
+    KENDI = ""
+    GORUNEN = ana_adlar
+    BAGLAMLAR[""] = Baglam(kendi: "", gorunen: ana_adlar)
+    var ana: [parser.Dugum] = []
+    repeat i from 1 to komutlar.length {
+        ana.add(_gez(komutlar[i]))
+        if not _tamam() {
+            return Sonuc.Hata(mesaj: HATA)
+        }
+    }
+
+    # Birleştir: modüllerin tanımları + modüllerin global değişkenleri + ana program
+    var tanimlar: [parser.Dugum] = []
+    var globaller: [parser.Dugum] = []
+    repeat s from 1 to SIRA.length {
+        var p = MODULLER[SIRA[s]].program
+        repeat i from 1 to p.length {
+            if p[i].tur is "DegiskenTanimi" {
+                globaller.add(p[i])
+            } else if p[i].tur is not "ImportKomutu" {
+                tanimlar.add(p[i])
+            }
+        }
+    }
+    var hepsi = _ekle_dugum(tanimlar, globaller)
+    repeat i from 1 to ana.length {
+        if ana[i].tur is not "ImportKomutu" {
+            hepsi.add(ana[i])
+        }
+    }
+    return Sonuc.Tamam(agac: parser.Dugum(tur: "Program", deger: "", ek: "", cocuklar: hepsi, satir: 0, sutun: 0))
+}
+
+fn _ekle_dugum(a: [parser.Dugum], b: [parser.Dugum]) -> [parser.Dugum] {
+    var s = a
+    repeat i from 1 to b.length {
+        s.add(b[i])
+    }
+    return s
+}

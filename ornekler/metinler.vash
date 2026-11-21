@@ -1,0 +1,39 @@
+# Metinler: Vash'ın diğer dillerden farkları
+
+# --- 1) Metnin içinde her türlü ifade ---
+var ad = "Çiğdem"
+var fiyat = 12.5
+var adet = 3
+var notlar = [90, 75]
+print("{ad}, adın {ad.length} harf. Toplam: {fiyat * adet} TL, ilk not: {notlar[1]}")
+
+# --- 2) Harf ve parça: 1'den başlar, 'to' iki sınırı da dahil eder, Türkçe bozulmaz ---
+var s = "çiçekçi"
+print("s[1] = {s[1]}   s[2 to 4] = {s[2 to 4]}   son harf = {s[s.length]}")
+
+# --- 3) Büyük/küçük harf: dil seçilebilir ---
+var sehir = "istanbul ılık"
+print("evrensel:", sehir.upper(), "   Türkçe:", sehir.upper("tr"))
+print("IŞIK İZMİR →", "IŞIK İZMİR".lower("tr"), "  (evrensel:", "IŞIK İZMİR".lower(), ")")
+
+# --- 4) Birleştirme doğal sırada; sayı listeleri de olur ---
+var adlar = ["Ali", "Ayşe", "Zeynep"]
+print(adlar.join(", "), "|", [3, 1, 4].join(" < "))
+
+# --- 5) Diğer işler ---
+var dosya = "rapor_2026.vash"
+print(dosya.starts_with("rapor"), dosya.ends_with(".vash"), dosya.replace("_", " "))
+var cumle = "   Vash  ile   metin   işlemek   kolay  "
+var kelimeler = cumle.split()
+print(kelimeler.length, "kelime:", kelimeler.join("|"))
+
+# --- 6) Basit bir uygulama: bir metindeki büyük harfle başlayan kelimeleri bul ---
+var metin = "Ankara ve İzmir arasında Çanakkale yok, ama eskişehir var"
+var buyukler: [text] = []
+repeat i from 1 to metin.split().length {
+    var k = metin.split()[i]
+    if k[1] is k[1].upper("tr") {
+        buyukler.add(k)
+    }
+}
+print("Büyük harfle başlayanlar:", buyukler.join(", "))

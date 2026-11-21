@@ -1,0 +1,517 @@
+# json: read and write JSON
+#
+#   import json
+#   var doc = json.parse("\{\"name\": \"Ali\", \"age\": 30, \"tags\": [\"a\", \"b\"]\}")
+#   if doc is not none {
+#       print(json.as_text(json.get(doc, "name"), ""))         # Ali
+#       print(json.as_number(json.get(doc, "age"), 0.0))      # 30.0
+#       var tags = json.as_list(json.get(doc, "tags"))         # [Json]
+#       print(json.stringify(doc))
+#   }
+#   if json.parse("[1, 2") is none { print(json.error("[1, 2")) }   # why it failed, with line and column
+#
+# Building: json.object({"a": json.number(1.0)}), json.array([...]), json.string("x"), json.boolean(true), json.null()
+# Reading: json.get(v, "key") / json.at(v, 1) give Null when missing, so they chain safely:
+#   json.as_text(json.get(json.get(doc, "user"), "name"), "unknown")
+# Or match on the value itself:  match v { String(s) { ... }  Number(n) { ... }  else { ... } }
+
+enum Json {
+    Null
+    Bool(value: bool)
+    Number(value: float)
+    String(value: text)
+    Array(items: [Json])
+    Object(fields: {text: Json})
+}
+
+# ---------- building ----------
+fn null() -> Json {
+    return Json.Null
+}
+
+fn boolean(b: bool) -> Json {
+    return Json.Bool(value: b)
+}
+
+fn number(n: float) -> Json {
+    return Json.Number(value: n)
+}
+
+fn string(t: text) -> Json {
+    return Json.String(value: t)
+}
+
+fn array(items: [Json]) -> Json {
+    return Json.Array(items: items)
+}
+
+fn object(fields: {text: Json}) -> Json {
+    return Json.Object(fields: fields)
+}
+
+# ---------- reading ----------
+fn get(v: Json, key: text) -> Json {               # object field; Null if missing or not an object
+    match v {
+        Object(f) {
+            if f.has(key) {
+                return f[key]
+            }
+            return Json.Null
+        }
+        else { return Json.Null }
+    }
+}
+
+fn has(v: Json, key: text) -> bool {
+    match v {
+        Object(f) { return f.has(key) }
+        else { return false }
+    }
+}
+
+fn at(v: Json, index: int) -> Json {               # array element (from 1); Null if missing or not an array
+    match v {
+        Array(items) {
+            if index >= 1 and index <= items.length {
+                return items[index]
+            }
+            return Json.Null
+        }
+        else { return Json.Null }
+    }
+}
+
+fn length(v: Json) -> int {                        # items of an array / fields of an object, otherwise 0
+    match v {
+        Array(items) { return items.length }
+        Object(f) { return f.length }
+        else { return 0 }
+    }
+}
+
+fn keys(v: Json) -> [text] {
+    match v {
+        Object(f) { return f.keys() }
+        else {
+            var none_: [text] = []
+            return none_
+        }
+    }
+}
+
+fn as_list(v: Json) -> [Json] {
+    match v {
+        Array(items) { return items }
+        else {
+            var empty: [Json] = []
+            return empty
+        }
+    }
+}
+
+fn as_fields(v: Json) -> {text: Json} {
+    match v {
+        Object(f) { return f }
+        else {
+            var empty: {text: Json} = {}
+            return empty
+        }
+    }
+}
+
+fn as_text(v: Json, fallback: text) -> text {
+    match v {
+        String(s) { return s }
+        else { return fallback }
+    }
+}
+
+fn as_number(v: Json, fallback: float) -> float {
+    match v {
+        Number(n) { return n }
+        else { return fallback }
+    }
+}
+
+fn as_int(v: Json, fallback: int) -> int {
+    match v {
+        Number(n) { return int(n) }
+        else { return fallback }
+    }
+}
+
+fn as_bool(v: Json, fallback: bool) -> bool {
+    match v {
+        Bool(b) { return b }
+        else { return fallback }
+    }
+}
+
+fn is_null(v: Json) -> bool {
+    match v {
+        Null { return true }
+        else { return false }
+    }
+}
+
+fn kind(v: Json) -> text {                         # "null" "bool" "number" "string" "array" "object"
+    match v {
+        Null { return "null" }
+        Bool(b) { return "bool" }
+        Number(n) { return "number" }
+        String(s) { return "string" }
+        Array(items) { return "array" }
+        Object(f) { return "object" }
+    }
+}
+
+# ---------- writing ----------
+fn stringify(v: Json) -> text {                    # compact, one line
+    return _render(v, "", "", "")
+}
+
+fn pretty(v: Json) -> text {                       # indented with 2 spaces
+    return _render(v, "\n", "  ", "")
+}
+
+fn _render(v: Json, newline: text, step: text, indent: text) -> text {
+    match v {
+        Null { return "null" }
+        Bool(b) {
+            if b {
+                return "true"
+            }
+            return "false"
+        }
+        Number(n) { return _number_text(n) }
+        String(s) { return _quote(s) }
+        Array(items) {
+            if items.length is 0 {
+                return "[]"
+            }
+            var inner = "{indent}{step}"
+            var pieces: [text] = []
+            repeat i from 1 to items.length {
+                var item = _render(items[i], newline, step, inner)
+                pieces.add("{newline}{inner}{item}")
+            }
+            var body = pieces.join(",")
+            return "[{body}{newline}{indent}]"
+        }
+        Object(f) {
+            var names = f.keys()
+            if names.length is 0 {
+                return "\{\}"
+            }
+            var inner = "{indent}{step}"
+            var colon = ":"
+            if step.length > 0 {
+                colon = ": "
+            }
+            var pieces: [text] = []
+            repeat i from 1 to names.length {
+                var key = _quote(names[i])
+                var item = _render(f[names[i]], newline, step, inner)
+                pieces.add("{newline}{inner}{key}{colon}{item}")
+            }
+            var body = pieces.join(",")
+            return "\{{body}{newline}{indent}\}"
+        }
+    }
+}
+
+fn _number_text(n: float) -> text {
+    if n < 1000000000000000.0 and n > -1000000000000000.0 {
+        var whole = int(n)
+        if n is float(whole) {
+            return text(whole)                      # 3.0 → 3
+        }
+    }
+    return text(n)
+}
+
+fn _quote(s: text) -> text {
+    var t = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t").replace(char(13), "\\r")
+    return "\"{t}\""
+}
+
+# ---------- parsing ----------
+type _Result {
+    value: Json
+    pos: int
+    error: text = ""
+}
+
+fn parse(content: text) -> Json? {                 # none if the text is not valid JSON (see json.error)
+    var r = _document(content)
+    if r.error.length > 0 {
+        return none
+    }
+    return r.value
+}
+
+fn error(content: text) -> text {                  # "" if valid, otherwise what is wrong and where
+    var r = _document(content)
+    if r.error.length is 0 {
+        return ""
+    }
+    var line = 1
+    var column = 1
+    var n = content.length
+    repeat i from 1 to r.pos - 1 {
+        if i <= n and content[i] is "\n" {
+            line = line + 1
+            column = 1
+        } else {
+            column = column + 1
+        }
+    }
+    return "line {line}, column {column}: {r.error}"
+}
+
+fn _document(s: text) -> _Result {
+    var n = s.length
+    var r = _value(s, _skip_space(s, 1, n), n, 0)
+    if r.error.length > 0 {
+        return r
+    }
+    var end = _skip_space(s, r.pos, n)
+    if end <= n {
+        return _fail(end, "unexpected text after the value")
+    }
+    return r
+}
+
+fn _fail(pos: int, message: text) -> _Result {
+    return _Result(value: Json.Null, pos: pos, error: message)
+}
+
+fn _skip_space(s: text, from: int, n: int) -> int {
+    var i = from
+    var cr = char(13)
+    repeat while i <= n {
+        var c = s[i]
+        if c is not " " and c is not "\n" and c is not "\t" and c is not cr {
+            return i
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn _value(s: text, i: int, n: int, depth: int) -> _Result {
+    if depth > 500 {
+        return _fail(i, "nested too deeply")
+    }
+    if i > n {
+        return _fail(i, "a value was expected but the text ended")
+    }
+    var c = s[i]
+    if c is "\{" {
+        return _object(s, i, n, depth)
+    }
+    if c is "[" {
+        return _array(s, i, n, depth)
+    }
+    if c is "\"" {
+        var r = _string(s, i, n)
+        return r
+    }
+    if c is "t" {
+        return _word(s, i, n, "true", Json.Bool(value: true))
+    }
+    if c is "f" {
+        return _word(s, i, n, "false", Json.Bool(value: false))
+    }
+    if c is "n" {
+        return _word(s, i, n, "null", Json.Null)
+    }
+    if c is "-" or c.is_digit() {
+        return _number(s, i, n)
+    }
+    return _fail(i, "unexpected character '{c}'")
+}
+
+fn _word(s: text, i: int, n: int, word: text, v: Json) -> _Result {
+    var end = i + word.length - 1
+    if end <= n and s[i to end] is word {
+        return _Result(value: v, pos: end + 1)
+    }
+    return _fail(i, "unknown word (expected {word})")
+}
+
+fn _number(s: text, i: int, n: int) -> _Result {
+    var j = i
+    if s[j] is "-" {
+        j = j + 1
+    }
+    var digits = 0
+    repeat while j <= n and _is_number_char(s[j]) {
+        j = j + 1
+        digits = digits + 1
+    }
+    if digits is 0 {
+        return _fail(i, "a number was expected")
+    }
+    var piece = s[i to j - 1]
+    var ok = true
+    var value = float(piece, else: 0.0)
+    if value is 0.0 {
+        ok = float(piece, else: 1.0) is 0.0         # really zero, or not a number?
+    }
+    if not ok {
+        return _fail(i, "'{piece}' is not a valid number")
+    }
+    return _Result(value: Json.Number(value: value), pos: j)
+}
+
+fn _is_number_char(c: text) -> bool {
+    return c.is_digit() or c is "." or c is "e" or c is "E" or c is "+" or c is "-"
+}
+
+fn _string(s: text, i: int, n: int) -> _Result {
+    var pieces: [text] = []
+    var j = i + 1
+    var run = j
+    repeat while j <= n {
+        var c = s[j]
+        if c is "\"" {
+            pieces.add(s[run to j - 1])
+            return _Result(value: Json.String(value: pieces.join("")), pos: j + 1)
+        }
+        if c is "\\" {
+            pieces.add(s[run to j - 1])
+            if j + 1 > n {
+                return _fail(j, "the text ended inside a string")
+            }
+            var e = s[j + 1]
+            if e is "u" {
+                if j + 5 > n {
+                    return _fail(j, "\\u needs 4 hex digits")
+                }
+                var code_ = _hex(s[j + 2 to j + 5])
+                if code_ < 0 {
+                    return _fail(j, "\\u needs 4 hex digits")
+                }
+                j = j + 6
+                if code_ >= 55296 and code_ <= 56319 and j + 5 <= n and s[j] is "\\" and s[j + 1] is "u" {
+                    var low = _hex(s[j + 2 to j + 5])           # surrogate pair → one character
+                    if low >= 56320 and low <= 57343 {
+                        code_ = 65536 + (code_ - 55296) * 1024 + (low - 56320)
+                        j = j + 6
+                    }
+                }
+                pieces.add(char(code_))
+            } else {
+                var out = _escape(e)
+                if out.length is 0 {
+                    return _fail(j, "unknown escape '\\{e}'")
+                }
+                pieces.add(out)
+                j = j + 2
+            }
+            run = j
+        } else {
+            j = j + 1
+        }
+    }
+    return _fail(i, "the string is never closed (missing \")")
+}
+
+fn _escape(e: text) -> text {
+    if e is "\"" { return "\"" }
+    if e is "\\" { return "\\" }
+    if e is "/" { return "/" }
+    if e is "n" { return "\n" }
+    if e is "t" { return "\t" }
+    if e is "r" { return char(13) }
+    if e is "b" { return char(8) }
+    if e is "f" { return char(12) }
+    return ""
+}
+
+fn _hex(h: text) -> int {
+    var v = 0
+    repeat k from 1 to h.length {
+        var c = code(h[k])
+        var d = -1
+        if c >= 48 and c <= 57 {
+            d = c - 48
+        } else if c >= 97 and c <= 102 {
+            d = c - 87
+        } else if c >= 65 and c <= 70 {
+            d = c - 55
+        }
+        if d < 0 {
+            return -1
+        }
+        v = v * 16 + d
+    }
+    return v
+}
+
+fn _array(s: text, i: int, n: int, depth: int) -> _Result {
+    var items: [Json] = []
+    var j = _skip_space(s, i + 1, n)
+    if j <= n and s[j] is "]" {
+        return _Result(value: Json.Array(items: items), pos: j + 1)
+    }
+    repeat while true {
+        var r = _value(s, j, n, depth + 1)
+        if r.error.length > 0 {
+            return r
+        }
+        items.add(r.value)
+        j = _skip_space(s, r.pos, n)
+        if j > n {
+            return _fail(j, "the array is never closed (missing ])")
+        }
+        if s[j] is "]" {
+            return _Result(value: Json.Array(items: items), pos: j + 1)
+        }
+        if s[j] is not "," {
+            return _fail(j, "',' or ']' was expected")
+        }
+        j = _skip_space(s, j + 1, n)
+    }
+    return _fail(j, "unreachable")
+}
+
+fn _object(s: text, i: int, n: int, depth: int) -> _Result {
+    var fields: {text: Json} = {}
+    var j = _skip_space(s, i + 1, n)
+    if j <= n and s[j] is "\}" {
+        return _Result(value: Json.Object(fields: fields), pos: j + 1)
+    }
+    repeat while true {
+        if j > n or s[j] is not "\"" {
+            return _fail(j, "a field name in quotes was expected")
+        }
+        var k = _string(s, j, n)
+        if k.error.length > 0 {
+            return k
+        }
+        var key = as_text(k.value, "")
+        j = _skip_space(s, k.pos, n)
+        if j > n or s[j] is not ":" {
+            return _fail(j, "':' was expected after the field name")
+        }
+        var r = _value(s, _skip_space(s, j + 1, n), n, depth + 1)
+        if r.error.length > 0 {
+            return r
+        }
+        fields[key] = r.value
+        j = _skip_space(s, r.pos, n)
+        if j > n {
+            return _fail(j, "the object is never closed (missing \})")
+        }
+        if s[j] is "\}" {
+            return _Result(value: Json.Object(fields: fields), pos: j + 1)
+        }
+        if s[j] is not "," {
+            return _fail(j, "',' or '\}' was expected")
+        }
+        j = _skip_space(s, j + 1, n)
+    }
+    return _fail(j, "unreachable")
+}

@@ -1,0 +1,53 @@
+# Unity röntgenini pencere olmadan dene:  vash run unity_olc.vash [proje klasörü]
+import fs
+import unity
+
+var girdi = args()
+var projeler = unity.projeleri_bul("C:\\Users", 5)
+print("bulunan projeler:", projeler.length)
+repeat i from 1 to projeler.length {
+    print("  ", projeler[i])
+}
+var proje = ""
+if projeler.length > 0 {
+    proje = projeler[1]
+}
+if girdi.length > 0 {
+    proje = girdi[1]
+}
+if proje.length is 0 {
+    print("Unity projesi bulunamadı. Kullanım: vash run unity_olc.vash \"C:\\yol\\Projem\"")
+    proje = "."
+}
+var ilerleme = channel[int]()
+var r = unity.rontgen(proje, ilerleme, fs.cores())
+print("")
+print("PROJE: {r.proje}  (Unity {r.surum})   {float(int(r.sure * 10.0)) / 10.0} sn")
+print("toplam {fs.size_text(r.toplam)} · Assets {fs.size_text(r.assets)} · Library {fs.size_text(r.library)} · diğer {fs.size_text(r.diger_klasorler)}")
+print("varlık: {r.varliklar.length} · script satırı: {r.script_satir} · kullanılmıyor olabilir: {r.kullanilmayan_sayi} ({fs.size_text(r.kullanilmayan_boyut)}) · uyarı: {r.uyari_sayi}")
+var turler = r.kategori_boyut.keys()
+repeat i from 1 to turler.length {
+    print("  {unity.tur_adi(turler[i])}: {r.kategori_sayi[turler[i]]} dosya, {fs.size_text(r.kategori_boyut[turler[i]])}")
+}
+print("en büyük:")
+repeat i from 1 to r.varliklar.length {
+    if i <= 6 {
+        print("  {fs.size_text(r.varliklar[i].boyut)}  {r.varliklar[i].yol}  {r.varliklar[i].uyari}")
+    }
+}
+print("kullanılmıyor olabilir (ilk 8):")
+var n = 0
+repeat i from 1 to r.varliklar.length {
+    if r.varliklar[i].kullanilmiyor and n < 8 {
+        n = n + 1
+        print("  {fs.size_text(r.varliklar[i].boyut)}  {r.varliklar[i].yol}")
+    }
+}
+print("uyarılar (ilk 8):")
+n = 0
+repeat i from 1 to r.varliklar.length {
+    if r.varliklar[i].uyari.length > 0 and n < 8 {
+        n = n + 1
+        print("  {r.varliklar[i].yol}: {r.varliklar[i].uyari}")
+    }
+}

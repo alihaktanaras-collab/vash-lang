@@ -1,0 +1,6 @@
+# files izniyle: klasör içi serbest, dışı yasak
+print("içeride yaz:", write_file("veri/not.txt", "tamam"))
+print("içeride oku:", read_file("veri/not.txt") else: "(yok)")
+print("şimdi dışarı çıkmayı deniyorum...")
+print(write_file("../kacti.txt", "kaçtım"))
+print("BU SATIR YAZILMAMALI")

@@ -1,0 +1,10 @@
+%YAML 1.1
+--- !u!1 &100
+GameObject:
+  m_Name: Komuta
+--- !u!212 &200
+SpriteRenderer:
+  m_Sprite: {fileID: 21300000, guid: 4c67d169b21b1f556040ecb57fc1ad40, type: 3}
+--- !u!114 &300
+MonoBehaviour:
+  m_Script: {fileID: 11500000, guid: 14ee58f12201e8ad2fd0dbf8931f87aa, type: 3}

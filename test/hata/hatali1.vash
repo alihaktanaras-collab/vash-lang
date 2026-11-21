@@ -1,0 +1,5 @@
+fn bol(a: int, b: int) -> int fails {
+    if b is 0 { fail "sıfır" }
+    return a // b
+}
+var x = bol(1, 2)

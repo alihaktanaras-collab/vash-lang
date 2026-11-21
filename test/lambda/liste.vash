@@ -1,0 +1,32 @@
+# Listelerin lambda alan işleri
+type Kisi {
+    ad: text
+    yas: int
+}
+
+var sayilar = [5, 3, 8, 1, 9, 2]
+print(sayilar.map(fn(x) => x * 2))
+print(sayilar.filter(fn(x) => x > 4))
+print(sayilar.any(fn(x) => x > 8), sayilar.all(fn(x) => x > 0), sayilar.all(fn(x) => x > 1))
+print(sayilar.count(fn(x) => x % 2 is 0))
+print(sayilar.find(fn(x) => x > 6, else: -1), sayilar.find(fn(x) => x > 100, else: -1))
+print(sayilar.map(fn(x) => "<{x}>").join(""))
+
+var kisiler = [Kisi(ad: "Ali", yas: 40), Kisi(ad: "Ece", yas: 25), Kisi(ad: "Can", yas: 33)]
+kisiler.sort(by: fn(a, b) => a.yas < b.yas)
+print(kisiler.map(fn(k) => k.ad))
+var genc = kisiler.find(fn(k) => k.yas < 30)
+if genc is not none {
+    print("genç:", genc.ad)
+}
+var yok = kisiler.find(fn(k) => k.yas > 90)
+print(yok)
+var sinir = 30
+print(kisiler.filter(fn(k) => k.yas > sinir).length)
+var metinler = ["armut", "elma", "kivi"]
+metinler.sort(by: fn(a, b) => a.length < b.length)
+print(metinler, metinler.map(fn(m) => m.length))
+var bayraklar = [true, false, true]
+print(bayraklar.filter(fn(b) => b).length, bayraklar.map(fn(b) => not b))
+var bos: [int] = []
+print(bos.map(fn(x) => x + 1), bos.any(fn(x) => true), bos.all(fn(x) => false))

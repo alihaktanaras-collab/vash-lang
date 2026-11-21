@@ -1,0 +1,4855 @@
+# =====================================================================
+#  4. İSTASYON: LLVM IR ÜRETİCİ — Vash ile yazılmış hâli
+# =====================================================================
+#  Python'daki derleyici/llvm_uretici.py'nin karşılığı.
+#  Tipleri kontrol edilmiş ağacı LLVM IR'a (makineye çok yakın bir dile) çevirir.
+#  Tip kontrolünün bulduğu bilgiler (tipler, fonksiyonlar, ana programın değişkenleri)
+#  doğrudan tipler modülünden okunur.
+#
+#      var x = 2 + 3      →      %t1 = add i64 2, 3
+#                                store i64 %t1, ptr %"v.x.1"
+# =====================================================================
+
+import parser
+import tipler
+import dil
+
+type Adres {
+    adres: text
+    tip: text
+}
+
+type Dongu {
+    ilerle: text            # skip'in gideceği yer
+    cikis: text             # stop'un gideceği yer
+}
+
+# do { } catch hata { }: hata olunca atlanacak yer ve hatanın konacağı değişken
+type Yakalayici {
+    etiket: text
+    adres: text
+}
+
+# Blok içinde yazılmış bir when: izlediği değişkenlerin adresleri ve kendi "önceki" bilgisi
+type YerelWhen {
+    kosul: parser.Dugum
+    govde: [parser.Dugum]
+    onceki: text
+    uretiliyor: bool
+    adresler: [text]
+}
+
+# Bir değer ve "yeni mi (sahibi biz miyiz)?" bilgisi
+type Deger {
+    v: text
+    yeni: bool
+}
+
+# Bir döngünün kontrol ve ilerleme adımlarını üretmek için gereken bilgiler
+type DonguBilgisi {
+    tur: text               # "sayi" / "surece" / "sayac"
+    kosul: parser.Dugum
+    sayac: text = ""
+    kac: text = ""
+    i: text = ""
+    son: text = ""
+    adim: text = ""
+    yon: text = ""          # "ileri" / "geri" / "calisirken"
+    buyukluk: int = 0
+    satir: int = 0
+}
+
+# C fonksiyonunun C tarafındaki imzası
+type CBilgisi {
+    ad: text
+    parametreler: [text]
+    donus: text
+}
+
+# Argümanlar: LLVM yazısı + sonra bırakılacak geçici değerler
+type Argumanlar {
+    parcalar: [text]
+    dugumler: [parser.Dugum]
+    degerler: [text]
+}
+
+type Kacisli {
+    yazi: text
+    bayt: int
+}
+
+enum Sonuc {
+    Tamam(ir: text)
+    Hata(mesaj: text)
+}
+
+# Çalışma zamanı kütüphanesindeki (calisma.c) fonksiyonlar
+global var CALISMA_ZAMANI: [text] = [
+    "declare void @calisma_baslat()",
+    "declare void @yaz_int(i64)",
+    "declare void @yaz_float(double)",
+    "declare void @yaz_bool(i8)",
+    "declare void @yaz_text(ptr)",
+    "declare void @yaz_bosluk()",
+    "declare void @yaz_satir()",
+    "declare ptr @metin_int(i64)",
+    "declare ptr @metin_float(double)",
+    "declare ptr @metin_bool(i8)",
+    "declare ptr @metin_birlestir(ptr, ptr)",
+    "declare ptr @metin_birlestir_int(ptr, i64)",
+    "declare void @tut(ptr)",
+    "declare void @birak(ptr)",
+    "declare void @hata_sifira_bolme(i64) noreturn",
+    "declare void @hata_sifir_adim(i64) noreturn",
+    "declare void @hata_tasma(i64) noreturn",
+    "declare \{ i64, i1 \} @llvm.sadd.with.overflow.i64(i64, i64)",
+    "declare \{ i64, i1 \} @llvm.ssub.with.overflow.i64(i64, i64)",
+    "declare \{ i64, i1 \} @llvm.smul.with.overflow.i64(i64, i64)",
+    "declare i32 @metin_esit(ptr, ptr)",
+    "declare void @hata_sinir(ptr, i64, i64) noreturn cold",
+    "declare ptr @liste_yeni(i64, i64)",
+    "declare void @liste_tut(ptr)",
+    "declare void @liste_birak(ptr)",
+    "declare i64 @liste_al(ptr, i64, i64)",
+    "declare void @liste_koy(ptr, i64, i64, i64)",
+    "declare void @liste_ekle(ptr, i64)",
+    "declare void @liste_sil(ptr, i64, i64)",
+    "declare i64 @liste_uzunluk(ptr)",
+    "declare ptr @liste_yazilabilir(ptr)",
+    "declare void @liste_yaz(ptr)",
+    "declare void @ui_baslat(ptr)",
+    "declare void @ui_metin(i64, ptr)",
+    "declare void @ui_deger(i64, ptr)",
+    "declare i64 @ui_bekle()",
+    "declare ptr @ui_olay_degeri()",
+    "declare void @ui_bitir()",
+    "declare ptr @metin_c_den(ptr)",
+    "declare i32 @metin_harf_turu(ptr, i32)",
+    "declare i64 @metin_kodu(ptr, i64)",
+    "declare ptr @harf_metni(i64, i64)",
+    "declare ptr @dosya_oku(ptr)",
+    "declare ptr @dosya_satirlar(ptr)",
+    "declare i32 @dosya_yaz(ptr, ptr, i32)",
+    "declare i32 @dosya_var_mi(ptr)",
+    "declare ptr @sozluk_yeni(i64, i64)",
+    "declare void @sozluk_tut(ptr)",
+    "declare void @sozluk_birak(ptr)",
+    "declare void @sozluk_koy(ptr, i64, i64)",
+    "declare i64 @sozluk_al(ptr, i64, i64)",
+    "declare i32 @sozluk_bul(ptr, i64, ptr)",
+    "declare i32 @sozluk_var_mi(ptr, i64)",
+    "declare void @sozluk_sil(ptr, i64, i64)",
+    "declare ptr @sozluk_anahtarlar(ptr)",
+    "declare ptr @sozluk_degerler(ptr)",
+    "declare ptr @sozluk_yazilabilir(ptr)",
+    "declare void @sozluk_yaz(ptr)",
+    "declare void @ui_liste_boy(i64, i64)",
+    "declare void @ui_metin_satir(i64, i64, ptr)",
+    "declare void @ui_satir_kirp(i64, i64)",
+    "declare i64 @ui_olay_satiri()",
+    "declare ptr @nesne_yeni(ptr)",
+    "declare void @nesne_tut(ptr)",
+    "declare void @nesne_birak(ptr)",
+    "declare ptr @nesne_yazilabilir(ptr)",
+    "declare void @nesne_alan_koy(ptr, i64, i64)",
+    "declare void @nesne_yaz(ptr)",
+    "declare ptr @oku_satir(ptr)",
+    "declare i64 @rastgele(i64, i64, i64)",
+    "declare double @zaman()",
+    "declare i64 @metin_int_cevir(ptr, i64)",
+    "declare double @metin_float_cevir(ptr, i64)",
+    "declare i64 @float_int_cevir(double, i64)",
+    "declare i64 @metin_uzunluk(ptr)",
+    "declare i32 @metin_iceriyor(ptr, ptr)",
+    "declare ptr @metin_bol(ptr, ptr, i64)",
+    "declare ptr @metin_kirp(ptr)",
+    "declare i64 @oku_int(ptr, i64)",
+    "declare double @oku_float(ptr, i64)",
+    "declare i32 @metin_int_dene(ptr, ptr)",
+    "declare i32 @metin_float_dene(ptr, ptr)",
+    "declare double @rastgele_float(double, double, i64)",
+    "declare i64 @liste_rastgele(ptr, i64)",
+    "declare ptr @metin_harf(ptr, i64, i64)",
+    "declare ptr @metin_parca_al(ptr, i64, i64, i64)",
+    "declare ptr @metin_buyuk(ptr, ptr, i64)",
+    "declare ptr @metin_kucuk(ptr, ptr, i64)",
+    "declare i32 @metin_basliyor(ptr, ptr)",
+    "declare i32 @metin_bitiyor(ptr, ptr)",
+    "declare ptr @metin_degistir(ptr, ptr, ptr, i64)",
+    "declare ptr @metin_bol_bosluk(ptr)",
+    "declare ptr @liste_birlestir(ptr, ptr)"
+]
+
+global var TBAA_TANIMLARI = [
+    "!9000 = !\{!\"Vash TBAA\"\}",
+    "!9001 = !\{!\"liste.baslik\", !9000, i64 0\}",
+    "!9002 = !\{!9001, !9001, i64 0\}",
+    "!9003 = !\{!\"liste.eleman\", !9000, i64 0\}",
+    "!9004 = !\{!9003, !9003, i64 0\}",
+    "!9005 = !\{i64 0, i64 1152921504606846976\}"
+]
+global var TBAA_BASLIK = "!tbaa !9002"
+global var TBAA_ELEMAN = "!tbaa !9004"
+
+global var HATA = ""
+global var UST: [text] = []                  # dosyanın en üstüne gidecekler
+global var METINLER: {text: text} = {}       # aynı metni iki kere yazmamak için
+global var METIN_SAYISI = 0
+global var SAYAC = 0                         # %t1, %t2 ... için sayaç
+global var GOVDE: [text] = []                # şu an yazılan fonksiyonun komut satırları
+global var ALLOCALAR: [text] = []            # yerel değişkenlerin hafıza ayırma satırları
+global var KAPSAM: {text: Adres} = {}        # değişken adı → adres ve tip
+global var DONUS_TIPI = "void"
+global var ANA_PROGRAM = false
+global var SIMDIKI_BLOK = "giris"
+global var METIN_YERELLERI: [Adres] = []     # çıkarken bırakılacak yerel metin/liste değişkenleri
+global var BLOK_DERINLIGI = 0
+global var DONGULER: [Dongu] = []
+global var YEREL_WHENLER: [YerelWhen] = []
+global var TIP_ICINDE = ""                   # şu an üretilen metodun tipi
+global var GERCEK_GLOBALLER: [text] = []
+global var METIN_GLOBALLERI: [Adres] = []
+global var KURESEL_WHENLER: {text: int} = {} # when'in yeri ("satır:sütun") → numarası
+global var IZLEYICILER: {text: [int]} = {}   # değişkenin adresi → onu izleyen küresel when'ler
+global var ALANLAR: {text: [parser.Dugum]} = {}   # tip adı → tipli alan düğümleri (varsayılanlar için)
+global var C_BILGI: {text: CBilgisi} = {}
+global var PENCERE_NO: {text: int} = {}
+global var PENCERE_SAYAC = 0
+global var SABLON = ""
+global var EK_BILDIRIMLER: [text] = []         # sadece kullanılınca tanıtılan çalışma zamanı fonksiyonları
+global var PROGRAM_PARALEL = false           # programda parallel var mı? (yoksa üretilen kod hiç değişmez)
+global var YAKALAYICILAR: [Yakalayici] = []   # şu an yazılan fonksiyonda açık olan do/catch'ler (içten dışa)
+global var EK_FONKSIYONLAR: [text] = []       # parallel işlerinden üretilen fonksiyonlar
+global var ELEMAN_LISTELERI: [text] = []      # parallel repeat işinde L[i] ile yazılan listeler
+global var PROGRAM_ARENA = false             # programda arena { } bloğu var mı? (yoksa üretilen kod hiç değişmez)
+global var ARENA_YERELLERI: [Adres] = []     # arena bloklarının içinde oluşturulan metin/liste değişkenleri
+global var ARENA_BASLANGIC: [int] = []       # her açık arena bloğunun ARENA_YERELLERI'nde başladığı yer                       # pencere.html (pencere varsa okunur)
+
+# =====================================================================
+#  Küçük yardımcılar
+# =====================================================================
+fn _icinde(ad: text, liste: [text]) -> bool {
+    repeat i from 1 to liste.length {
+        if liste[i] is ad {
+            return true
+        }
+    }
+    return false
+}
+
+fn _sira(ad: text, liste: [text]) -> int {
+    repeat i from 1 to liste.length {
+        if liste[i] is ad {
+            return i
+        }
+    }
+    return 0
+}
+
+fn _yer(d: parser.Dugum) -> text {
+    return "{d.satir}:{d.sutun}"
+}
+
+fn _dolu(d: parser.Dugum) -> bool {                  # Python'daki "if k.degilse:" (boş liste de yok sayılır)
+    return d.tur is not "Bos" and d.cocuklar.length > 0
+}
+
+fn _temel(tip: text) -> text {                       # 'Ogrenci?' → 'Ogrenci'
+    if tip.length > 0 and tip.ends_with("?") and tip is not "[?]" and tip is not "\{?\}" {
+        return tip[1 to tip.length - 1]
+    }
+    return tip
+}
+
+fn _kullanici_tipi_mi(t: text) -> bool {
+    return tipler.TIPLER.has(t) or tipler.ENUMLAR.has(t)
+}
+
+fn _sozluk_mu(tip: text) -> bool {
+    return tip.starts_with("\{")
+}
+
+fn _sayacli(tip: text) -> bool {                     # hafızadan yer alıp sayaçla mı yönetiliyor?
+    var t = _temel(tip)
+    return t is "text" or t is "bytes" or t.starts_with("fn(") or t.starts_with("[") or t.starts_with("\{") or _kullanici_tipi_mi(t)
+}
+
+fn _ic(tip: text) -> text {                          # "[int]" → "int"
+    return tip[2 to tip.length - 1]
+}
+
+fn _iki_nokta(t: text) -> int {
+    repeat i from 1 to t.length {
+        if t[i] is ":" {
+            return i
+        }
+    }
+    return 0
+}
+
+fn _anahtar_tipi(t: text) -> text {                  # "{text:[int]}" → "text"
+    return t[2 to _iki_nokta(t) - 1]
+}
+
+fn _deger_tipi(t: text) -> text {                    # "{text:[int]}" → "[int]"
+    return t[_iki_nokta(t) + 1 to t.length - 1]
+}
+
+# Listede/nesnede her elemanın türü (calisma.c'deki T_INT, T_FLOAT ... ile aynı)
+fn _eleman_turu(tip: text) -> int {
+    var t = _temel(tip)
+    if t.starts_with("task[") or t.starts_with("channel[") {   # arka plan işi / kanal: sadece numarası (tam sayı)
+        return 0
+    }
+    if t.starts_with("fn(") {                        # lambda / fonksiyon değeri (calisma.c: T_KAPANIS)
+        return 8
+    }
+    if _kullanici_tipi_mi(t) {
+        return 5
+    }
+    if _sozluk_mu(t) {
+        return 6
+    }
+    if t is "int" or t is "ptr" {
+        return 0
+    }
+    if t is "float" {
+        return 1
+    }
+    if t is "bool" {
+        return 2
+    }
+    if t is "text" {
+        return 3
+    }
+    return 4
+}
+
+fn _llvm_tipi(tip: text) -> text {
+    if tip is "int" or tip.starts_with("task[") or tip.starts_with("channel[") {
+        return "i64"
+    }
+    if tip is "float" {
+        return "double"
+    }
+    if tip is "bool" {
+        return "i1"
+    }
+    if tip is "void" {
+        return "void"
+    }
+    return "ptr"
+}
+
+fn _sifir_degeri(tip: text) -> text {
+    var l = _llvm_tipi(tip)
+    if l is "i64" {
+        return "0"
+    }
+    if l is "double" {
+        return "0.0"
+    }
+    if l is "i1" {
+        return "false"
+    }
+    return "null"
+}
+
+fn _hex(n: int, basamak: int) -> text {
+    var rakamlar = "0123456789ABCDEF"
+    var ters: [text] = []
+    var x = n
+    repeat basamak {
+        ters.add(rakamlar[x % 16 + 1])
+        x = x // 16
+    }
+    var s: [text] = []
+    repeat i from 1 to ters.length {
+        s.add(ters[ters.length + 1 - i])
+    }
+    return s.join("")
+}
+
+# LLVM ondalık sayıları kesin olsun diye 16'lık tabanda ister: 3.5 → 0x400C000000000000
+# (sayının bitleri: 1 işaret + 11 üs + 52 kesir; 2 ile çarpıp bölmek kesin olduğu için bitler tam bulunur)
+fn _ondalik_yazisi(yazi: text) -> text {
+    var x = float(yazi)
+    if x is 0.0 {
+        return "0x0000000000000000"
+    }
+    var isaret = 0
+    if x < 0.0 {
+        isaret = 1
+        x = -x
+    }
+    var us = 0
+    repeat while x >= 2.0 {
+        x = x / 2.0
+        us = us + 1
+    }
+    repeat while x < 1.0 {
+        x = x * 2.0
+        us = us - 1
+    }
+    var kesir = int((x - 1.0) * 4503599627370496.0)
+    return "0x{_hex(isaret * 2048 + us + 1023, 3)}{_hex(kesir, 13)}"
+}
+
+# Bir metni LLVM'in c"..." yazısına çevir: harfler UTF-8 baytlarına, özel baytlar \XX'e
+fn _kacir(metin: text) -> Kacisli {
+    var parcalar: [text] = []
+    var bayt = 0
+    var n = metin.length
+    var i = 1
+    repeat while i <= n {                    # 256'lık parçalarla: uzun metinlerde de hızlı
+        var son = i + 255
+        if son > n {
+            son = n
+        }
+        var parca = metin[i to son]
+        repeat j from 1 to parca.length {
+            var h = parca[j]
+            var c = code(h)
+            if c < 128 {
+                bayt = bayt + 1
+                if c >= 32 and c < 127 and c is not 34 and c is not 92 {
+                    parcalar.add(h)
+                } else {
+                    parcalar.add("\\{_hex(c, 2)}")
+                }
+            } else {
+                var baytlar: [int] = []
+                if c < 2048 {
+                    baytlar = [192 + c // 64, 128 + c % 64]
+                } else if c < 65536 {
+                    baytlar = [224 + c // 4096, 128 + (c // 64) % 64, 128 + c % 64]
+                } else {
+                    baytlar = [240 + c // 262144, 128 + (c // 4096) % 64, 128 + (c // 64) % 64, 128 + c % 64]
+                }
+                repeat k from 1 to baytlar.length {
+                    parcalar.add("\\{_hex(baytlar[k], 2)}")
+                }
+                bayt = bayt + baytlar.length
+            }
+        }
+        i = son + 1
+    }
+    parcalar.add("\\00")                     # metnin sonunu gösteren 0 baytı
+    return Kacisli(yazi: parcalar.join(""), bayt: bayt + 1)
+}
+
+# Kodları karşılaştırarak sırala (Python'daki sorted() gibi)
+fn _once_mi(a: text, b: text) -> bool {
+    var n = a.length
+    if b.length < n {
+        n = b.length
+    }
+    repeat i from 1 to n {
+        var x = code(a[i])
+        var y = code(b[i])
+        if x is not y {
+            return x < y
+        }
+    }
+    return a.length < b.length
+}
+
+fn _sirala(l: [text]) -> [text] {
+    var s = l
+    repeat i from 1 to s.length {
+        repeat j from i + 1 to s.length {
+            if _once_mi(s[j], s[i]) {
+                var g = s[i]
+                s[i] = s[j]
+                s[j] = g
+            }
+        }
+    }
+    return s
+}
+
+# Bir ağaç parçasında geçen bütün değişken adları (when'in neyi izlediğini bulmak için)
+fn _adlari_topla(d: parser.Dugum, adlar: [text]) -> [text] {
+    var sonuc = adlar
+    if (d.tur is "Isim" or d.tur is "Atama") and not _icinde(d.deger, sonuc) {
+        sonuc.add(d.deger)
+    }
+    repeat i from 1 to d.cocuklar.length {
+        sonuc = _adlari_topla(d.cocuklar[i], sonuc)
+    }
+    return sonuc
+}
+
+# =====================================================================
+#  Satır yazma, kutular, etiketler
+# =====================================================================
+fn _yeni() -> text {                                 # yeni bir sonuç kutusu: %t1, %t2, ...
+    use change SAYAC
+    SAYAC = SAYAC + 1
+    return "%t{SAYAC}"
+}
+
+fn _etiket(ad: text) -> text {
+    use change SAYAC
+    SAYAC = SAYAC + 1
+    return "{ad}{SAYAC}"
+}
+
+fn _yaz(satir: text) {
+    use change GOVDE
+    GOVDE.add("  {satir}")
+}
+
+fn _blok_baslat(etiket: text) {
+    use change GOVDE
+    use change SIMDIKI_BLOK
+    GOVDE.add("{etiket}:")
+    SIMDIKI_BLOK = etiket
+}
+
+# Başka bir bloğa atla; arkasından gelen (hiç çalışmayacak) kod için yeni bir blok aç
+fn _atla(etiket: text) {
+    _yaz("br label %{etiket}")
+    _blok_baslat(_etiket("olu"))
+}
+
+# Çalışma zamanının yeni fonksiyonlarını sadece kullanılınca tanıt (eski programların kodu hiç değişmesin)
+fn _ek_bildir(satir: text) {
+    use change EK_BILDIRIMLER
+    if not _icinde(satir, EK_BILDIRIMLER) {
+        EK_BILDIRIMLER.add(satir)
+        _ust_ekle(satir)
+    }
+}
+
+fn _ust_ekle(satir: text) {
+    use change UST
+    UST.add(satir)
+}
+
+fn _alloca_ekle(satir: text) {
+    use change ALLOCALAR
+    ALLOCALAR.add(satir)
+}
+
+# Bir metni programın içine sabit olarak göm, adresini döndür (sayacı -1: "hiç temizleme")
+fn _metin_sabiti(metin: text) -> text {
+    use change METINLER
+    use change METIN_SAYISI
+    if METINLER.has(metin) {
+        return METINLER[metin]
+    }
+    var k = _kacir(metin)
+    var ad = "@.metin.{METIN_SAYISI}"
+    var tip = "\{ i64, i64, [{k.bayt} x i8] \}"
+    _ust_ekle("{ad} = private unnamed_addr constant {tip} \{ i64 -1, i64 {k.bayt - 1}, [{k.bayt} x i8] c\"{k.yazi}\" \}, align 16")
+    var adres = "getelementptr inbounds ({tip}, ptr {ad}, i32 0, i32 2)"
+    METINLER[metin] = adres
+    METIN_SAYISI = METIN_SAYISI + 1
+    return adres
+}
+
+# =====================================================================
+#  BELLEK: SAYAÇ (tut / birak)
+# =====================================================================
+fn _enum_olusturma_mi(e: parser.Dugum) -> bool {     # Odeme.Nakit / Odeme.Kart(...)
+    return (e.tur is "Ozellik" or e.tur is "MetotCagrisi") and tipler.ENUMLAR.has(e.cocuklar[1].tip)
+}
+
+# Bu ifade YENİ bir metin/liste mi üretiyor (sahibi biz miyiz)?
+fn _sahipli_mi(e: parser.Dugum) -> bool {
+    if not _sayacli(e.tip) {
+        return false
+    }
+    if _enum_olusturma_mi(e) {
+        return true
+    }
+    var tur = e.tur
+    if tur is "Dene" {
+        return _sahipli_mi(e.cocuklar[1])
+    }
+    if tur is "Lambda" or tur is "FonksiyonDegeri" or tur is "DegerCagrisi" {
+        return true
+    }
+    if tur is "YedekliDeger" or tur is "Cagri" or tur is "Liste" or tur is "MetotCagrisi" or tur is "SozlukDegeri" {
+        return true
+    }
+    if tur is "Metin" {
+        repeat i from 1 to e.cocuklar.length {
+            if e.cocuklar[i].tur is not "Parca" {
+                return true
+            }
+        }
+        return false
+    }
+    if tur is "Erisim" {
+        if e.cocuklar[1].tip is "text" or e.cocuklar[1].tip is "bytes" {
+            return true
+        }
+        return _sahipli_mi(e.cocuklar[1])
+    }
+    if tur is "Ozellik" {
+        return _sahipli_mi(e.cocuklar[1])
+    }
+    return false
+}
+
+fn _tut(v: text, tip: text) {
+    var t = _temel(tip)
+    if t.starts_with("fn(") {
+        _kapanis_bildirimleri()
+        _yaz("call void @kapanis_tut(ptr {v})")
+    } else if t is "text" {
+        _yaz("call void @tut(ptr {v})")
+    } else if _kullanici_tipi_mi(t) {
+        _yaz("call void @nesne_tut(ptr {v})")
+    } else if _sozluk_mu(t) {
+        _yaz("call void @sozluk_tut(ptr {v})")
+    } else {
+        _yaz("call void @liste_tut(ptr {v})")
+    }
+}
+
+fn _birak(v: text, tip: text) {
+    var t = _temel(tip)
+    if t.starts_with("fn(") {
+        _kapanis_bildirimleri()
+        _yaz("call void @kapanis_birak(ptr {v})")
+    } else if t is "text" {
+        _yaz("call void @birak(ptr {v})")
+    } else if _kullanici_tipi_mi(t) {
+        _yaz("call void @nesne_birak(ptr {v})")
+    } else if _sozluk_mu(t) {
+        _yaz("call void @sozluk_birak(ptr {v})")
+    } else {
+        _yaz("call void @liste_birak(ptr {v})")
+    }
+}
+
+fn _gecici_birak(e: parser.Dugum, v: text) {        # kullanılıp atılan yeni bir değeri bırak
+    if _sahipli_mi(e) {
+        _birak(v, e.tip)
+    }
+}
+
+# Bir metin/liste değişkenine yeni değer koy: yeniyi tut, eskiyi bırak
+fn _metin_sakla(adres: text, yeni: text, sahipli: bool, tip: text) {
+    if not sahipli {
+        _tut(yeni, tip)
+    }
+    var deger = yeni
+    if PROGRAM_ARENA and _kacabilir_mi(adres) {      # arenadaki bir değer dışarıda yaşayacak bir yere gidiyor olabilir
+        deger = _yeni()
+        _yaz("{deger} = call ptr @arena_kac(ptr {yeni}, i64 {_eleman_turu(tip)})")
+    }
+    var eski = _yeni()
+    _yaz("{eski} = load ptr, ptr {adres}")
+    _yaz("store ptr {deger}, ptr {adres}")
+    _birak(eski, tip)
+}
+
+# Bu adrese konan değer, şu anki arena bloğu bittikten sonra da yaşar mı?
+#   arena bloğunun içindeysek: adres bu bloğun kendi değişkeni değilse evet
+#   değilsek: globaller ve nesne alanları (metotta) evet; fonksiyonun kendi değişkenleri hayır
+fn _kacabilir_mi(adres: text) -> bool {
+    if ARENA_BASLANGIC.length > 0 {
+        var bas = ARENA_BASLANGIC[ARENA_BASLANGIC.length]
+        repeat i from bas to ARENA_YERELLERI.length {
+            if ARENA_YERELLERI[i].adres is adres {
+                return false
+            }
+        }
+        return true
+    }
+    return not adres.starts_with("%\"")
+}
+
+# arena { ... }
+fn _arena_blok(k: parser.Dugum) {
+    use change ARENA_BASLANGIC
+    use change ARENA_YERELLERI
+    _yaz("call void @arena_baslat()")
+    ARENA_BASLANGIC.add(ARENA_YERELLERI.length + 1)
+    _blok(k.cocuklar[1].cocuklar)
+    # Bloğun kendi değişkenlerini bırak ve boşalt: arena boşalınca onlara kimse bakmıyor olmalı
+    var bas = ARENA_BASLANGIC[ARENA_BASLANGIC.length]
+    repeat i from bas to ARENA_YERELLERI.length {
+        _gizli_slot_bosalt(ARENA_YERELLERI[i].adres, ARENA_YERELLERI[i].tip)
+    }
+    repeat while ARENA_YERELLERI.length >= bas {
+        ARENA_YERELLERI.remove(ARENA_YERELLERI.length)
+    }
+    ARENA_BASLANGIC.remove(ARENA_BASLANGIC.length)
+    _yaz("call void @arena_bitir()")
+}
+
+fn _yerelleri_birak() {
+    repeat i from 1 to METIN_YERELLERI.length {
+        var a = METIN_YERELLERI[i]
+        var v = _yeni()
+        _yaz("{v} = load ptr, ptr {a.adres}")
+        _birak(v, a.tip)
+    }
+}
+
+# ---------- Liste elemanları: her eleman 8 baytlık bir "kutu" (i64) ----------
+fn _kutuya(v: text, tip: text) -> text {
+    if tip is "int" or tip.starts_with("task[") or tip.starts_with("channel[") {
+        return v
+    }
+    var t = _yeni()
+    if tip is "float" {
+        _yaz("{t} = bitcast double {v} to i64")
+    } else if tip is "bool" {
+        _yaz("{t} = zext i1 {v} to i64")
+    } else {
+        _yaz("{t} = ptrtoint ptr {v} to i64")
+    }
+    return t
+}
+
+fn _kutudan(k: text, tip: text) -> text {
+    if tip is "int" or tip.starts_with("task[") or tip.starts_with("channel[") {
+        return k
+    }
+    var t = _yeni()
+    if tip is "float" {
+        _yaz("{t} = bitcast i64 {k} to double")
+    } else if tip is "bool" {
+        _yaz("{t} = trunc i64 {k} to i1")
+    } else {
+        _yaz("{t} = inttoptr i64 {k} to ptr")
+    }
+    return t
+}
+
+# Listeye (ya da bir alana) konacak değeri üret ve sahiplen
+fn _listeye_hazirla(e: parser.Dugum, eleman_tipi: text) -> text {
+    var v = _donustur(_ifade(e), e.tip, eleman_tipi)
+    if _sayacli(eleman_tipi) and not _sahipli_mi(e) {
+        _tut(v, eleman_tipi)
+    }
+    return _kutuya(v, eleman_tipi)
+}
+
+# ---- İç içe değiştirme: a[i].b[j] = x, m[i][j] = x, s["k"].add(x) ... ----
+# Bir değerin durduğu yerin adresi: değişken, liste elemanı, nesne alanı ya da sözlük değeri.
+# Yol üzerindeki her kap önce "kendine ait" yapılır (paylaşılıyorsa sadece o kopyalanır; geri kalanı kopyalanmaz).
+fn _yuva(d: parser.Dugum) -> text {
+    if d.tur is "Isim" {
+        return _adres_bul(d.deger).adres
+    }
+    var kap_d = d.cocuklar[1]
+    var kap = _yazilabilir_d(kap_d)
+    if d.tur is "Ozellik" {                          # nesne.alan
+        var b = tipler.TIPLER[_temel(kap_d.tip)]
+        var no = _sira(d.deger, b.alan_adlari)
+        return _alan_adresi(kap, no - 1)
+    }
+    if _sozluk_mu(kap_d.tip) {                       # sozluk[anahtar]
+        var anahtar_d = d.cocuklar[2]
+        var anahtar = _ifade(anahtar_d)
+        var y = _yeni()
+        _ek_bildir("declare ptr @sozluk_yer(ptr, i64, i64)")
+        _yaz("{y} = call ptr @sozluk_yer(ptr {kap}, i64 {_kutuya(anahtar, _anahtar_tipi(kap_d.tip))}, i64 {d.satir})")
+        _gecici_birak(anahtar_d, anahtar)
+        return y
+    }
+    var sira = _ifade(d.cocuklar[2])                 # liste[sira]
+    var n = _liste_uzunlugu(kap)
+    var veri = _liste_alani(kap, 32, "ptr")
+    var s0 = _sinir_kontrolu(kap, sira, n, d.satir)
+    var ey = _yeni()
+    _yaz("{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")
+    return ey
+}
+
+# Yuvadaki değeri kendine ait yap (paylaşılıyorsa kopyala, kopyayı yuvaya koy) ve döndür
+fn _yuvayi_yaz(yuva: text, tip: text) -> text {
+    var t = _temel(tip)
+    var fonk = "liste_yazilabilir"
+    if _kullanici_tipi_mi(t) {
+        fonk = "nesne_yazilabilir"
+    } else if _sozluk_mu(t) {
+        fonk = "sozluk_yazilabilir"
+    }
+    var p = _yeni()
+    var p2 = _yeni()
+    _yaz("{p} = load ptr, ptr {yuva}")
+    _yaz("{p2} = call ptr @{fonk}(ptr {p})")
+    _yaz("store ptr {p2}, ptr {yuva}")
+    return p2
+}
+
+fn _yazilabilir_d(d: parser.Dugum) -> text {
+    return _yuvayi_yaz(_yuva(d), d.tip)
+}
+
+# a[i].b = x → 'a' değişkeninin adresi (when'ler onu izler)
+fn _kok_adresi(d: parser.Dugum) -> text {
+    var k = d
+    repeat while k.tur is not "Isim" {
+        k = k.cocuklar[1]
+    }
+    return _adres_bul(k.deger).adres
+}
+
+fn _yazilabilir_liste(ad: text) -> text {            # paylaşılıyorsa önce kopyala (kopyala-yaz)
+    var a = _adres_bul(ad)
+    var p = _yeni()
+    var p2 = _yeni()
+    _yaz("{p} = load ptr, ptr {a.adres}")
+    _yaz("{p2} = call ptr @liste_yazilabilir(ptr {p})")
+    _yaz("store ptr {p2}, ptr {a.adres}")
+    return p2
+}
+
+# Tam sayılarla +, -, *: taşmayı yakalar ("sayı çok büyüdü" hatası)
+fn _tam_sayi_islem(komut: text, sol: text, sag: text, satir: int) -> text {
+    var ad = "smul"
+    if komut is "add" {
+        ad = "sadd"
+    } else if komut is "sub" {
+        ad = "ssub"
+    }
+    var cift = _yeni()
+    var t = _yeni()
+    var tasti = _yeni()
+    _yaz("{cift} = call \{ i64, i1 \} @llvm.{ad}.with.overflow.i64(i64 {sol}, i64 {sag})")
+    _yaz("{t} = extractvalue \{ i64, i1 \} {cift}, 0")
+    _yaz("{tasti} = extractvalue \{ i64, i1 \} {cift}, 1")
+    var hata_b = _etiket("tasma")
+    var devam_b = _etiket("tasmadi")
+    _yaz("br i1 {tasti}, label %{hata_b}, label %{devam_b}")
+    _blok_baslat(hata_b)
+    _yaz("call void @hata_tasma(i64 {satir})")
+    _yaz("unreachable")
+    _blok_baslat(devam_b)
+    return t
+}
+
+fn _donustur(deger: text, kaynak: text, hedef: text) -> text {     # int → float (5 → 5.0)
+    if kaynak is "int" and hedef is "float" {
+        var t = _yeni()
+        _yaz("{t} = sitofp i64 {deger} to double")
+        return t
+    }
+    return deger
+}
+
+# =====================================================================
+#  PROGRAM
+# =====================================================================
+# Ana programın hangi değişkenlerine fonksiyonlar erişiyor? ('global var' + 'use x' ile çağrılanlar)
+fn _tara(komutlar: [parser.Dugum], adlar: [text]) -> [text] {
+    var sonuc = adlar
+    repeat i from 1 to komutlar.length {
+        var k = komutlar[i]
+        if k.tur is "UseKomutu" and not tipler.IZINLER.has(k.deger) and not _icinde(k.deger, sonuc) {
+            sonuc.add(k.deger)
+        }
+        var govde = -1                                   # bu komutun "govde" ve "degilse" çocukları
+        var degilse = -1
+        if k.tur is "Eger" {
+            govde = 2
+            degilse = 3
+        } else if k.tur is "TekrarSayi" or k.tur is "TekrarSurece" or k.tur is "WhenKomutu" {
+            govde = 2
+        } else if k.tur is "TekrarSayac" {
+            govde = 4
+        } else if k.tur is "MatchKomutu" {
+            degilse = 3
+        }
+        if govde > 0 {
+            sonuc = _tara(k.cocuklar[govde].cocuklar, sonuc)
+        }
+        if degilse > 0 {
+            sonuc = _tara(k.cocuklar[degilse].cocuklar, sonuc)
+        }
+    }
+    return sonuc
+}
+
+fn _disaridan_erisilenler(program: parser.Dugum) -> [text] {
+    var adlar: [text] = []
+    var komutlar = program.cocuklar
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "DegiskenTanimi" and komutlar[i].ek is "global" and not _icinde(komutlar[i].deger, adlar) {
+            adlar.add(komutlar[i].deger)
+        }
+    }
+    repeat i from 1 to komutlar.length {
+        var k = komutlar[i]
+        if k.tur is "FonksiyonTanimi" {
+            adlar = _tara(k.cocuklar[3].cocuklar, adlar)
+        } else if k.tur is "TipTanimi" {
+            var metotlar = k.cocuklar[2].cocuklar
+            repeat j from 1 to metotlar.length {
+                adlar = _tara(metotlar[j].cocuklar[3].cocuklar, adlar)
+            }
+        } else if k.tur is "WhenKomutu" {
+            # küresel when gizli bir fonksiyon olacak: kullandığı ana program değişkenleri global olmalı
+            var bos: [text] = []
+            var gereken = _adlari_topla(k, bos)
+            repeat j from 1 to gereken.length {
+                if tipler.ANA.has(gereken[j]) and not _icinde(gereken[j], adlar) {
+                    adlar.add(gereken[j])
+                }
+            }
+        }
+    }
+    return adlar
+}
+
+fn _arena_var_mi(d: parser.Dugum) -> bool {
+    if d.tur is "ArenaBlok" {
+        return true
+    }
+    repeat i from 1 to d.cocuklar.length {
+        if _arena_var_mi(d.cocuklar[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+fn uret(program: parser.Dugum, sablon_klasoru: text) -> Sonuc {
+    use change HATA
+    use change UST
+    use change METINLER
+    use change METIN_SAYISI
+    use change SAYAC
+    use change TIP_ICINDE
+    use change GERCEK_GLOBALLER
+    use change METIN_GLOBALLERI
+    use change KURESEL_WHENLER
+    use change IZLEYICILER
+    use change ALANLAR
+    use change C_BILGI
+    use change PENCERE_NO
+    use change PENCERE_SAYAC
+    use change SABLON
+    use change PROGRAM_ARENA
+    use change EK_BILDIRIMLER
+    use change PROGRAM_PARALEL
+    use change EK_FONKSIYONLAR
+    use files
+    HATA = ""
+    UST = []
+    METINLER = {}
+    METIN_SAYISI = 0
+    SAYAC = 0
+    TIP_ICINDE = ""
+    METIN_GLOBALLERI = []
+    KURESEL_WHENLER = {}
+    IZLEYICILER = {}
+    ALANLAR = {}
+    C_BILGI = {}
+    PENCERE_NO = {}
+    PENCERE_SAYAC = 0
+    SABLON = ""
+    EK_BILDIRIMLER = []
+    PROGRAM_ARENA = _arena_var_mi(program)
+    PROGRAM_PARALEL = _paralel_var_mi(program)
+    EK_FONKSIYONLAR = []
+    if PROGRAM_PARALEL {
+        _ust_ekle("declare void @paralel_repeat(ptr, ptr, i64, i64)")
+        _ust_ekle("declare void @paralel_isler(ptr, ptr, i64)")
+        _ust_ekle("declare void @yaz_kilitle()")
+        _ust_ekle("declare void @yaz_ac()")
+    }
+    if PROGRAM_ARENA {
+        _ust_ekle("declare void @arena_baslat()")
+        _ust_ekle("declare void @arena_bitir()")
+        _ust_ekle("declare ptr @arena_kac(ptr, i64)")
+    }
+    var komutlar = program.cocuklar
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "Pencere" {
+            var okunan = read_file("{sablon_klasoru}/pencere.html")
+            if okunan is none {
+                return Sonuc.Hata(mesaj: dil.sec("pencere.html okunamadı ({sablon_klasoru}).", "Could not read pencere.html ({sablon_klasoru})."))
+            }
+            SABLON = okunan
+        }
+    }
+    var fonksiyon_kodlari: [text] = []
+
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "TipTanimi" {
+            ALANLAR[komutlar[i].deger] = komutlar[i].cocuklar[1].cocuklar
+        }
+        if komutlar[i].tur is "ExternBlok" and komutlar[i].cocuklar.length > 2 {     # C yapıları
+            var yapilar = komutlar[i].cocuklar[3].cocuklar
+            repeat j from 1 to yapilar.length {
+                ALANLAR[yapilar[j].deger] = yapilar[j].cocuklar[1].cocuklar
+            }
+        }
+    }
+
+    # Ana programdaki değişkenlerden SADECE fonksiyonların gerçekten eriştikleri global olur
+    GERCEK_GLOBALLER = _disaridan_erisilenler(program)
+    repeat i from 1 to komutlar.length {
+        var k = komutlar[i]
+        if k.tur is "DegiskenTanimi" and _icinde(k.deger, GERCEK_GLOBALLER) {
+            _ust_ekle("@\"g.{k.deger}\" = internal global {_llvm_tipi(k.tip)} {_sifir_degeri(k.tip)}")
+            if _sayacli(k.tip) {
+                METIN_GLOBALLERI.add(Adres(adres: "@\"g.{k.deger}\"", tip: k.tip))
+            }
+        }
+    }
+
+    # Küresel when'ler: durum değişkenleri ve "kim kimi izliyor" tablosu
+    repeat i from 1 to komutlar.length {
+        var k = komutlar[i]
+        if k.tur is "WhenKomutu" {
+            var n = KURESEL_WHENLER.keys().length
+            KURESEL_WHENLER[_yer(k)] = n
+            _ust_ekle("@\"when.{n}.aktif\" = internal global i1 false")
+            _ust_ekle("@\"when.{n}.onceki\" = internal global i1 false")
+            _ust_ekle("@\"when.{n}.calisiyor\" = internal global i1 false")
+            var bos: [text] = []
+            var izlenenler = _adlari_topla(k.cocuklar[1], bos)
+            repeat j from 1 to izlenenler.length {
+                var adres = "@\"g.{izlenenler[j]}\""
+                var liste: [int] = []
+                if IZLEYICILER.has(adres) {
+                    liste = IZLEYICILER[adres]
+                }
+                liste.add(n)
+                IZLEYICILER[adres] = liste
+            }
+        }
+    }
+
+    # extern: C fonksiyonlarını LLVM'e tanıt
+    _extern_tanimlari(program)
+    if HATA.length > 0 {
+        return Sonuc.Hata(mesaj: HATA)
+    }
+
+    # Kendi tipler ve enum'lar: çalışma zamanının okuyacağı "tür bilgisi" tabloları
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "TipTanimi" {
+            var b = tipler.TIPLER[komutlar[i].deger]
+            _tur_tablosu(b.ad, b.ad, b.alan_adlari, b.alan_tipleri, 0)
+        }
+        if komutlar[i].tur is "ExternBlok" and komutlar[i].cocuklar.length > 2 {
+            var yapilar = komutlar[i].cocuklar[3].cocuklar
+            repeat j from 1 to yapilar.length {
+                var yb = tipler.TIPLER[yapilar[j].deger]
+                _tur_tablosu(yb.ad, yb.ad, yb.alan_adlari, yb.alan_tipleri, 0)
+            }
+        }
+    }
+    repeat i from 1 to komutlar.length {
+        if komutlar[i].tur is "EnumTanimi" {
+            var b = tipler.ENUMLAR[komutlar[i].deger]
+            repeat j from 1 to b.cesitler.length {
+                _tur_tablosu("{b.ad}.{b.cesitler[j]}", b.cesitler[j], b.alan_adlari[j], b.alan_tipleri[j], j - 1)
+            }
+        }
+    }
+
+    # Fonksiyonlar, metotlar, küresel when'ler
+    repeat i from 1 to komutlar.length {
+        var k = komutlar[i]
+        if k.tur is "FonksiyonTanimi" {
+            fonksiyon_kodlari.add(_fonksiyon(k, tipler.FONKSIYONLAR[k.deger], ""))
+        } else if k.tur is "TipTanimi" {
+            var b = tipler.TIPLER[k.deger]
+            var metotlar = k.cocuklar[2].cocuklar
+            repeat j from 1 to metotlar.length {
+                fonksiyon_kodlari.add(_fonksiyon(metotlar[j], b.metotlar[metotlar[j].deger], k.deger))
+            }
+        } else if k.tur is "WhenKomutu" {
+            fonksiyon_kodlari.add(_kuresel_when_fonksiyonu(k))
+        }
+    }
+
+    # Ana program → main fonksiyonu
+    _fonksiyon_baslat("int", true)
+    _yaz("call void @calisma_baslat()")
+    repeat i from 1 to komutlar.length {
+        var tur = komutlar[i].tur
+        if tur is not "FonksiyonTanimi" and tur is not "TipTanimi" and tur is not "EnumTanimi" and tur is not "ExternBlok" {
+            _komut(komutlar[i])
+        }
+    }
+    _yerelleri_birak()
+    repeat i from 1 to METIN_GLOBALLERI.length {
+        var v = _yeni()
+        _yaz("{v} = load ptr, ptr {METIN_GLOBALLERI[i].adres}")
+        _birak(v, METIN_GLOBALLERI[i].tip)
+    }
+    _yaz("ret i32 0")
+    var ana = _fonksiyon_bitir("define i32 @main() \{")
+    if HATA.length > 0 {
+        return Sonuc.Hata(mesaj: HATA)
+    }
+
+    var parcalar = ["; ===== Bu dosya derleyicimiz tarafından üretildi =====", "", "; --- Çalışma zamanı kütüphanesi (calisma.c) ---"]
+    parcalar.add("{CALISMA_ZAMANI.join("\n")}\n")
+    parcalar.add("; --- Global değişkenler ve metin sabitleri ---")
+    repeat i from 1 to UST.length {
+        parcalar.add(UST[i])
+    }
+    parcalar.add("")
+    repeat i from 1 to fonksiyon_kodlari.length {
+        parcalar.add(fonksiyon_kodlari[i])
+    }
+    repeat i from 1 to EK_FONKSIYONLAR.length {
+        parcalar.add(EK_FONKSIYONLAR[i])
+    }
+    parcalar.add("; --- Ana program ---")
+    parcalar.add(ana)
+    parcalar.add("; --- LLVM'e bellek ipuçları (liste başlığı ile elemanlar çakışmaz) ---")
+    repeat i from 1 to TBAA_TANIMLARI.length {
+        parcalar.add(TBAA_TANIMLARI[i])
+    }
+    return Sonuc.Tamam(ir: "{parcalar.join("\n")}\n")
+}
+
+# =====================================================================
+#  PARALLEL: işleri ayrı fonksiyonlara çevirip çekirdeklere dağıtmak
+# =====================================================================
+#  Her iş ayrı bir fonksiyon olur:  define internal void @"paralel.N"(ptr %ortam, i64 %bas, i64 %son)
+#  %ortam: işin kullandığı dışarıdaki değişkenlerin ADRESLERİ (0. yer: metodun içindeyse nesnenin kendisi).
+#  Çalışma zamanı (calisma.c) bu fonksiyonları çekirdeklere dağıtır ve hepsinin bitmesini bekler.
+#  Tip kontrolü, aynı anda çalışan işlerin aynı değişkene dokunmadığını önceden garanti eder.
+
+# Şu an yazılan fonksiyonun bütün durumu (iç içe bir fonksiyon yazıp geri dönebilmek için)
+type FnDurum {
+    govde: [text]
+    allocalar: [text]
+    kapsam: {text: Adres}
+    donus_tipi: text
+    ana_program: bool
+    simdiki_blok: text
+    metin_yerelleri: [Adres]
+    blok_derinligi: int
+    donguler: [Dongu]
+    yerel_whenler: [YerelWhen]
+    arena_yerelleri: [Adres]
+    arena_baslangic: [int]
+    tip_icinde: text
+    eleman_listeleri: [text]
+    yakalayicilar: [Yakalayici]
+}
+
+fn _durum_al() -> FnDurum {
+    return FnDurum(govde: GOVDE, allocalar: ALLOCALAR, kapsam: KAPSAM, donus_tipi: DONUS_TIPI, ana_program: ANA_PROGRAM, simdiki_blok: SIMDIKI_BLOK, metin_yerelleri: METIN_YERELLERI, blok_derinligi: BLOK_DERINLIGI, donguler: DONGULER, yerel_whenler: YEREL_WHENLER, arena_yerelleri: ARENA_YERELLERI, arena_baslangic: ARENA_BASLANGIC, tip_icinde: TIP_ICINDE, eleman_listeleri: ELEMAN_LISTELERI, yakalayicilar: YAKALAYICILAR)
+}
+
+fn _durum_ver(d: FnDurum) {
+    use change GOVDE
+    use change ALLOCALAR
+    use change KAPSAM
+    use change DONUS_TIPI
+    use change ANA_PROGRAM
+    use change SIMDIKI_BLOK
+    use change METIN_YERELLERI
+    use change BLOK_DERINLIGI
+    use change DONGULER
+    use change YEREL_WHENLER
+    use change ARENA_YERELLERI
+    use change ARENA_BASLANGIC
+    use change TIP_ICINDE
+    use change ELEMAN_LISTELERI
+    use change YAKALAYICILAR
+    YAKALAYICILAR = d.yakalayicilar
+    GOVDE = d.govde
+    ALLOCALAR = d.allocalar
+    KAPSAM = d.kapsam
+    DONUS_TIPI = d.donus_tipi
+    ANA_PROGRAM = d.ana_program
+    SIMDIKI_BLOK = d.simdiki_blok
+    METIN_YERELLERI = d.metin_yerelleri
+    BLOK_DERINLIGI = d.blok_derinligi
+    DONGULER = d.donguler
+    YEREL_WHENLER = d.yerel_whenler
+    ARENA_YERELLERI = d.arena_yerelleri
+    ARENA_BASLANGIC = d.arena_baslangic
+    TIP_ICINDE = d.tip_icinde
+    ELEMAN_LISTELERI = d.eleman_listeleri
+}
+
+fn _paralel_var_mi(d: parser.Dugum) -> bool {
+    if d.tur is "ParalelBlok" or d.tur is "ParalelTekrar" or d.tur is "Baslat" {
+        return true
+    }
+    repeat i from 1 to d.cocuklar.length {
+        if _paralel_var_mi(d.cocuklar[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+# Bir ağaç parçasında kullanılan, şu an kapsamda olan değişkenler
+fn _yakalananlar(d: parser.Dugum, adlar: [text]) -> [text] {
+    var s = adlar
+    if (d.tur is "Isim" or d.tur is "Atama") and KAPSAM.has(d.deger) and not _icinde(d.deger, s) {
+        s.add(d.deger)
+    }
+    repeat i from 1 to d.cocuklar.length {
+        s = _yakalananlar(d.cocuklar[i], s)
+    }
+    return s
+}
+
+# parallel repeat'te L[sayac] = ... ile yazılan dışarıdaki listeler
+fn _eleman_yazilan_listeler(d: parser.Dugum, sayac: text, liste: [text]) -> [text] {
+    var s = liste
+    var c = d.cocuklar
+    if d.tur is "ElemanAtama" and c[1].tur is "Isim" and KAPSAM.has(c[1].deger) and c[1].tip.starts_with("[") and c[2].tur is "Isim" and c[2].deger is sayac and not _icinde(c[1].deger, s) {
+        s.add(c[1].deger)
+    }
+    repeat i from 1 to c.length {
+        s = _eleman_yazilan_listeler(c[i], sayac, s)
+    }
+    return s
+}
+
+# Çağıran tarafta: değişkenlerin adreslerini bir diziye koy, dizinin adresini döndür
+fn _ortam_hazirla(adlar: [text]) -> text {
+    use change SAYAC
+    SAYAC = SAYAC + 1
+    var ortam_adr = "%\"ortam.{SAYAC}\""
+    var n = adlar.length + 1
+    _alloca_ekle("  {ortam_adr} = alloca [{n} x ptr]")
+    if TIP_ICINDE.length > 0 {
+        _yaz("store ptr %\"self\", ptr {ortam_adr}")
+    } else {
+        _yaz("store ptr null, ptr {ortam_adr}")
+    }
+    repeat j from 1 to adlar.length {
+        var a = _adres_bul(adlar[j])
+        var yer = _yeni()
+        _yaz("{yer} = getelementptr inbounds [{n} x ptr], ptr {ortam_adr}, i64 0, i64 {j}")
+        _yaz("store ptr {a.adres}, ptr {yer}")
+    }
+    return ortam_adr
+}
+
+# İş fonksiyonunun başında: ortamdaki adresleri değişkenlere bağla
+fn _isci_baslat(adlar: [text], tipler_: [text], tip_icinde: text) {
+    use change TIP_ICINDE
+    _fonksiyon_baslat("void", false)
+    TIP_ICINDE = tip_icinde
+    var n = adlar.length + 1
+    if tip_icinde.length > 0 {
+        _yaz("%\"self\" = load ptr, ptr %ortam")
+    }
+    repeat j from 1 to adlar.length {
+        var yer = _yeni()
+        var p = _yeni()
+        _yaz("{yer} = getelementptr inbounds [{n} x ptr], ptr %ortam, i64 0, i64 {j}")
+        _yaz("{p} = load ptr, ptr {yer}")
+        _kapsam_koy(adlar[j], Adres(adres: p, tip: tipler_[j]))
+    }
+}
+
+fn _isci_bitir(ad: text) -> text {
+    _yerelleri_birak()
+    _yaz("ret void")
+    return _fonksiyon_bitir("define internal void {ad}(ptr %ortam, i64 %bas, i64 %son) \{")
+}
+
+fn _ek_fonksiyon(kod: text) {
+    use change EK_FONKSIYONLAR
+    EK_FONKSIYONLAR.add(kod)
+}
+
+# liste.sort(by: f): çalışma zamanı iki kutulu elemanla çağırır, biz f'nin anlayacağı tiplere çevirip f'yi çağırırız
+fn _kutu_cevir_satiri(hedef: text, kutu: text, tip: text) -> text {
+    if tip is "int" or tip.starts_with("task[") or tip.starts_with("channel[") {
+        return "  {hedef} = add i64 {kutu}, 0\n"
+    }
+    if tip is "float" {
+        return "  {hedef} = bitcast i64 {kutu} to double\n"
+    }
+    if tip is "bool" {
+        return "  {hedef} = trunc i64 {kutu} to i1\n"
+    }
+    return "  {hedef} = inttoptr i64 {kutu} to ptr\n"
+}
+
+fn _siralama_sarici(f_adi: text, eleman_tipi: text) -> text {
+    var ad = "@\"sirala.{f_adi}\""
+    var lt = _llvm_tipi(eleman_tipi)
+    var x = _kutu_cevir_satiri("%x", "%a", eleman_tipi)
+    var y = _kutu_cevir_satiri("%y", "%b", eleman_tipi)
+    var kod = "define internal i32 {ad}(i64 %a, i64 %b) \{\n{x}{y}  %c = call i1 @\"f.{f_adi}\"({lt} %x, {lt} %y)\n  %r = zext i1 %c to i32\n  ret i32 %r\n}\n"
+    if not _icinde(kod, EK_FONKSIYONLAR) {
+        _ek_fonksiyon(kod)
+    }
+    return ad
+}
+
+fn _kapsam_tipleri(adlar: [text]) -> [text] {
+    var s: [text] = []
+    repeat i from 1 to adlar.length {
+        s.add(KAPSAM[adlar[i]].tip)
+    }
+    return s
+}
+
+# parallel repeat i from a to b { ... }
+fn _paralel_tekrar(k: parser.Dugum) {
+    use change SAYAC
+    use change ELEMAN_LISTELERI
+    var bas = _ifade(k.cocuklar[1])
+    var son = _ifade(k.cocuklar[2])
+    var govde = k.cocuklar[4].cocuklar
+    var bos: [text] = []
+    var adlar = _yakalananlar(k.cocuklar[4], bos)
+    var listeler = _eleman_yazilan_listeler(k.cocuklar[4], k.deger, bos)
+    repeat i from 1 to listeler.length {             # her tur kendi elemanına yazacak: önce listenin kendine ait olduğundan emin ol
+        _yazilabilir_liste(listeler[i])
+    }
+    # Toplamalar (x = x + ...): her çekirdek kendi ara sonucunu tutar, en sonda asıl değişkene ekler
+    var bos_d: [parser.Dugum] = []
+    var toplamalar = _toplamalari_bul(k.cocuklar[4], adlar, k.deger, bos_d)
+    var t_adlari: [text] = []
+    var t_turleri: [text] = []
+    repeat i from 1 to toplamalar.length {
+        var t_ad = tipler.toplama_hedefi(toplamalar[i], adlar, k.deger)
+        if not _icinde(t_ad, t_adlari) {
+            t_adlari.add(t_ad)
+            t_turleri.add(tipler.toplama_turu(toplamalar[i]))
+            if KAPSAM[t_ad].tip.starts_with("[") {
+                _yazilabilir_liste(t_ad)             # sonunda yerinde eklenecek: önce kendine ait olsun
+            }
+        }
+    }
+    var ortam_adr = _ortam_hazirla(adlar)
+    var tipler_ = _kapsam_tipleri(adlar)
+    SAYAC = SAYAC + 1
+    var ad = "@\"paralel.{SAYAC}\""
+    # İş fonksiyonunu yaz (şu anki fonksiyonun yazımını bir kenara koyup)
+    var durum = _durum_al()
+    _isci_baslat(adlar, tipler_, TIP_ICINDE)
+    ELEMAN_LISTELERI = listeler
+    var t_dis: [Adres] = []
+    repeat j from 1 to t_adlari.length {
+        t_dis.add(_adres_bul(t_adlari[j]))
+        _toplama_baslat(t_adlari[j], t_turleri[j], t_dis[j])
+    }
+    var son_yer = _yerel_ayir("gizli_son{SAYAC}", "int")
+    _yaz("store i64 %son, ptr {son_yer}")
+    var i = _yerel_ayir(k.deger, "int")
+    _yaz("store i64 %bas, ptr {i}")
+    _dongu_iskeleti(DonguBilgisi(tur: "sayac", kosul: k, i: i, son: son_yer, adim: "1", yon: "ileri", buyukluk: 1, satir: k.satir), govde)
+    repeat j from 1 to t_adlari.length {
+        _toplama_bitir(t_adlari[j], t_turleri[j], t_dis[j], k.satir)
+    }
+    _ek_fonksiyon(_isci_bitir(ad))
+    _durum_ver(durum)
+    _yaz("call void @paralel_repeat(ptr {ad}, ptr {ortam_adr}, i64 {bas}, i64 {son})")
+}
+
+fn _toplamalari_bul(d: parser.Dugum, adlar: [text], sayac: text, bulunan: [parser.Dugum]) -> [parser.Dugum] {
+    var s = bulunan
+    if tipler.toplama_hedefi(d, adlar, sayac).length > 0 {
+        s.add(d)
+        return s
+    }
+    repeat i from 1 to d.cocuklar.length {
+        s = _toplamalari_bul(d.cocuklar[i], adlar, sayac, s)
+    }
+    return s
+}
+
+# Toplamanın başlangıç değeri: toplamada 0, çarpmada 1
+fn _toplama_kimligi(tur: text, tip: text) -> text {
+    if tip is "float" {
+        if tur is "*" {
+            return "1.0"
+        }
+        return "0.0"
+    }
+    if tur is "*" {
+        return "1"
+    }
+    return "0"
+}
+
+# İş fonksiyonunun başında: değişkenin yerine bu çekirdeğe ait bir ara sonuç koy
+fn _toplama_baslat(ad: text, tur: text, dis: Adres) {
+    _ek_bildir("declare ptr @liste_toplama_parcasi(ptr, i64)")
+    _ek_bildir("declare void @liste_toplama_birlestir(ptr, ptr, i64, i64)")
+    _ek_bildir("declare void @toplama_kilitle()")
+    _ek_bildir("declare void @toplama_ac()")
+    var yerel = _yerel_ayir(ad, dis.tip)
+    if dis.tip.starts_with("[") {
+        var kutu = "0"
+        if tur is "*" {
+            kutu = "1"
+            if _ic(dis.tip) is "float" {
+                kutu = "4607182418800017408"         # 1.0'ın bitleri
+            }
+        }
+        var p = _yeni()
+        var l = _yeni()
+        _yaz("{p} = load ptr, ptr {dis.adres}")
+        _yaz("{l} = call ptr @liste_toplama_parcasi(ptr {p}, i64 {kutu})")
+        _yaz("store ptr {l}, ptr {yerel}")
+    } else {
+        _yaz("store {_llvm_tipi(dis.tip)} {_toplama_kimligi(tur, dis.tip)}, ptr {yerel}")
+    }
+}
+
+# İş fonksiyonunun sonunda: ara sonucu asıl değişkene ekle (aynı anda tek çekirdek)
+fn _toplama_bitir(ad: text, tur: text, dis: Adres, satir: int) {
+    var yerel = _adres_bul(ad)
+    if dis.tip.starts_with("[") {
+        var hedef = _yeni()
+        var parca = _yeni()
+        var islem = 0
+        if tur is "*" {
+            islem = 1
+        }
+        _yaz("{hedef} = load ptr, ptr {dis.adres}")
+        _yaz("{parca} = load ptr, ptr {yerel.adres}")
+        _yaz("call void @liste_toplama_birlestir(ptr {hedef}, ptr {parca}, i64 {islem}, i64 {satir})")
+        return
+    }
+    var lt = _llvm_tipi(dis.tip)
+    _yaz("call void @toplama_kilitle()")
+    var a = _yeni()
+    var b = _yeni()
+    _yaz("{a} = load {lt}, ptr {dis.adres}")
+    _yaz("{b} = load {lt}, ptr {yerel.adres}")
+    var sonuc = ""
+    if dis.tip is "float" {
+        sonuc = _yeni()
+        if tur is "*" {
+            _yaz("{sonuc} = fmul double {a}, {b}")
+        } else {
+            _yaz("{sonuc} = fadd double {a}, {b}")
+        }
+    } else if tur is "*" {
+        sonuc = _tam_sayi_islem("mul", a, b, satir)
+    } else {
+        sonuc = _tam_sayi_islem("add", a, b, satir)
+    }
+    _yaz("store {lt} {sonuc}, ptr {dis.adres}")
+    _yaz("call void @toplama_ac()")
+}
+
+# =====================================================================
+#  start / wait: arka planda iş
+#  start f(a, b) → değerler yığından alınan küçük bir diziye konur (iş bitene kadar onları iş tutar),
+#  bir sarıcı fonksiyon f'yi çağırıp sonucu kutulu olarak saklar. İşin kendisi sadece bir numaradır (i64).
+# =====================================================================
+fn _birakma_fonksiyonu(tip: text) -> text {
+    var t = _temel(tip)
+    if t is "text" {
+        return "birak"
+    }
+    if _kullanici_tipi_mi(t) {
+        return "nesne_birak"
+    }
+    if _sozluk_mu(t) {
+        return "sozluk_birak"
+    }
+    return "liste_birak"
+}
+
+fn _baslat(e: parser.Dugum) -> text {
+    use change SAYAC
+    var c = e.cocuklar[1]
+    var f = tipler.FONKSIYONLAR[c.deger]
+    var argler = c.cocuklar[1].cocuklar
+    var n = f.p_tipler.length
+    if argler.length < n {
+        n = argler.length
+    }
+    _ek_bildir("declare ptr @malloc(i64)")
+    _ek_bildir("declare void @free(ptr)")
+    _ek_bildir("declare i64 @gorev_baslat(ptr, ptr)")
+    var boyut = 8 * n
+    if boyut is 0 {
+        boyut = 8
+    }
+    var veri = _yeni()
+    _yaz("{veri} = call ptr @malloc(i64 {boyut})")
+    repeat i from 1 to n {
+        var p = f.p_tipler[i]
+        var v = _donustur(_ifade(argler[i]), argler[i].tip, p)
+        if _sayacli(p) and not _sahipli_mi(argler[i]) {
+            _tut(v, p)                               # iş bitene kadar değeri iş tutar
+        }
+        var k = _kutuya(v, p)
+        var yer = _yeni()
+        _yaz("{yer} = getelementptr inbounds i64, ptr {veri}, i64 {i - 1}")
+        _yaz("store i64 {k}, ptr {yer}")
+    }
+    SAYAC = SAYAC + 1
+    var ad = "@\"baslat.{SAYAC}\""
+    var satirlar: [text] = []
+    var cagri_argumanlari: [text] = []
+    var birakmalar: [text] = []
+    repeat i from 1 to n {
+        var p = f.p_tipler[i]
+        satirlar.add("  %y{i} = getelementptr inbounds i64, ptr %veri, i64 {i - 1}\n  %k{i} = load i64, ptr %y{i}\n")
+        satirlar.add(_kutu_cevir_satiri("%a{i}", "%k{i}", p))
+        cagri_argumanlari.add("{_llvm_tipi(p)} %a{i}")
+        if _sayacli(p) {
+            birakmalar.add("  call void @{_birakma_fonksiyonu(p)}(ptr %a{i})\n")
+        }
+    }
+    var cagri = "@\"f.{c.deger}\"({cagri_argumanlari.join(", ")})"
+    var d = f.donus
+    if d is "void" {
+        satirlar.add("  call void {cagri}\n  store i64 0, ptr %sonuc\n")
+    } else {
+        satirlar.add("  %r = call {_llvm_tipi(d)} {cagri}\n")
+        if d is "int" or d.starts_with("task[") or d.starts_with("channel[") {
+            satirlar.add("  store i64 %r, ptr %sonuc\n")
+        } else if d is "float" {
+            satirlar.add("  %rk = bitcast double %r to i64\n  store i64 %rk, ptr %sonuc\n")
+        } else if d is "bool" {
+            satirlar.add("  %rk = zext i1 %r to i64\n  store i64 %rk, ptr %sonuc\n")
+        } else {
+            satirlar.add("  %rk = ptrtoint ptr %r to i64\n  store i64 %rk, ptr %sonuc\n")
+        }
+    }
+    var kod = "define internal void {ad}(ptr %veri, ptr %sonuc) \{\n{satirlar.join("")}{birakmalar.join("")}  call void @free(ptr %veri)\n  ret void\n}\n"
+    _ek_fonksiyon(kod)
+    var t = _yeni()
+    _yaz("{t} = call i64 @gorev_baslat(ptr {ad}, ptr {veri})")
+    return t
+}
+
+# kanal.send(x) · receive() / try_receive() (→ T? ya da else: değeri) · close()
+fn _kanal_metodu(e: parser.Dugum) -> text {
+    use change SAYAC
+    var no = _ifade(e.cocuklar[1])
+    var t_kanal = e.cocuklar[1].tip
+    var mesaj = t_kanal[9 to t_kanal.length - 1]
+    var ad = e.deger
+    if ad is "send" {
+        _ek_bildir("declare void @kanal_gonder(i64, i64, i64)")
+        var kutu = _listeye_hazirla(e.cocuklar[2].cocuklar[1], mesaj)     # sahipliği kanala geçer
+        _yaz("call void @kanal_gonder(i64 {no}, i64 {kutu}, i64 {e.satir})")
+        return ""
+    }
+    if ad is "close" {
+        _ek_bildir("declare void @kanal_kapat(i64)")
+        _yaz("call void @kanal_kapat(i64 {no})")
+        return ""
+    }
+    _ek_bildir("declare i32 @kanal_al(i64, i32, ptr)")
+    var bekle = 1
+    if ad is "try_receive" {
+        bekle = 0
+    }
+    SAYAC = SAYAC + 1
+    var yer = "%\"kanal_al.{SAYAC}\""
+    _alloca_ekle("  {yer} = alloca i64")
+    var c = _yeni()
+    _yaz("{c} = call i32 @kanal_al(i64 {no}, i32 {bekle}, ptr {yer})")
+    var yedek = e.cocuklar[3]
+    if yedek.tur is "Bos" {                          # T?: mesaj yoksa kutu 0 → none
+        var kutu = _yeni()
+        _yaz("{kutu} = load i64, ptr {yer}")
+        return _kutudan(kutu, mesaj)
+    }
+    var t = _yeni()
+    var cb = _yeni()
+    _yaz("{cb} = icmp ne i32 {c}, 0")
+    var var_b = _etiket("mesaj_var")
+    var yok_b = _etiket("mesaj_yok")
+    var son = _etiket("al_son")
+    _yaz("br i1 {cb}, label %{var_b}, label %{yok_b}")
+    _blok_baslat(var_b)
+    var kutu2 = _yeni()
+    _yaz("{kutu2} = load i64, ptr {yer}")
+    var v1 = _kutudan(kutu2, mesaj)                  # kanaldan gelen sahipliğiyle gelir
+    var var_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(yok_b)
+    var v2 = _donustur(_ifade(yedek), yedek.tip, mesaj)
+    if _sayacli(mesaj) and not _sahipli_mi(yedek) {
+        _tut(v2, mesaj)
+    }
+    var yok_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+    _yaz("{t} = phi {_llvm_tipi(mesaj)} [ {v1}, %{var_son} ], [ {v2}, %{yok_son} ]")
+    return t
+}
+
+# is.wait() → sonuç (sahipliğiyle) · is.done() → bitti mi?
+fn _is_metodu(e: parser.Dugum) -> text {
+    var no = _ifade(e.cocuklar[1])
+    var t = _yeni()
+    if e.deger is "done" {
+        _ek_bildir("declare i32 @gorev_bitti_mi(i64)")
+        var c = _yeni()
+        _yaz("{c} = call i32 @gorev_bitti_mi(i64 {no})")
+        _yaz("{t} = icmp ne i32 {c}, 0")
+        return t
+    }
+    _ek_bildir("declare i64 @gorev_bekle(i64, i64)")
+    _yaz("{t} = call i64 @gorev_bekle(i64 {no}, i64 {e.satir})")
+    if e.tip is "void" {
+        return ""
+    }
+    return _kutudan(t, e.tip)
+}
+
+# =====================================================================
+#  LAMBDA ve FONKSİYON DEĞERLERİ
+#  Değer: kapanış nesnesi { sayaç, kod adresi, yakalanan değerler }. Kod: tip @"lambda.N"(ptr %kapanis, parametreler...)
+# =====================================================================
+fn _kapanis_bildirimleri() {
+    _ek_bildir("declare ptr @kapanis_yeni(ptr, i64)")
+    _ek_bildir("declare void @kapanis_koy(ptr, i64, i64, i64)")
+    _ek_bildir("declare i64 @kapanis_al(ptr, i64)")
+    _ek_bildir("declare void @kapanis_tut(ptr)")
+    _ek_bildir("declare void @kapanis_birak(ptr)")
+}
+
+fn _lambda_uret(e: parser.Dugum) -> text {
+    use change SAYAC
+    use change TIP_ICINDE
+    _kapanis_bildirimleri()
+    var parametreler = e.cocuklar[1].cocuklar
+    var govde = e.cocuklar[2].cocuklar
+    var yakalananlar = e.cocuklar[3].cocuklar
+    var donus = tipler.fn_donusu(e.tip)
+    SAYAC = SAYAC + 1
+    var ad = "@\"lambda.{SAYAC}\""
+    var k = _yeni()
+    _yaz("{k} = call ptr @kapanis_yeni(ptr {ad}, i64 {yakalananlar.length})")
+    repeat i from 1 to yakalananlar.length {         # dışarıdaki değerlerin kopyaları (sahiplikleri kapanışa geçer)
+        var y = yakalananlar[i]
+        var v = _ifade(y)
+        if _sayacli(y.tip) {
+            _tut(v, y.tip)
+        }
+        var kutu = _kutuya(v, y.tip)
+        _yaz("call void @kapanis_koy(ptr {k}, i64 {i - 1}, i64 {_eleman_turu(y.tip)}, i64 {kutu})")
+    }
+    # lambda'nın kodu: ayrı bir fonksiyon
+    var durum = _durum_al()
+    _fonksiyon_baslat(donus, false)
+    TIP_ICINDE = ""
+    var imza: [text] = ["ptr %kapanis"]
+    repeat i from 1 to parametreler.length {
+        var p = parametreler[i]
+        imza.add("{_llvm_tipi(p.tip)} %\"p.{p.deger}\"")
+        var adres = _yerel_ayir(p.deger, p.tip)
+        _yaz("store {_llvm_tipi(p.tip)} %\"p.{p.deger}\", ptr {adres}")
+        if _sayacli(p.tip) {
+            _tut("%\"p.{p.deger}\"", p.tip)
+        }
+    }
+    repeat i from 1 to yakalananlar.length {
+        var y = yakalananlar[i]
+        var kutu = _yeni()
+        _yaz("{kutu} = call i64 @kapanis_al(ptr %kapanis, i64 {i - 1})")
+        var v = _kutudan(kutu, y.tip)
+        if _sayacli(y.tip) {
+            _tut(v, y.tip)
+        }
+        var adres = _yerel_ayir(y.deger, y.tip)
+        _yaz("store {_llvm_tipi(y.tip)} {v}, ptr {adres}")
+    }
+    repeat i from 1 to govde.length {
+        _komut(govde[i])
+    }
+    if donus is "void" {
+        _yerelleri_birak()
+        _yaz("ret void")
+    } else {
+        _yaz("unreachable")
+    }
+    _ek_fonksiyon(_fonksiyon_bitir("define internal {_llvm_tipi(donus)} {ad}({imza.join(", ")}) \{"))
+    _durum_ver(durum)
+    return k
+}
+
+# sort(by: kapanış): çalışma zamanı iki kutulu elemanla çağırır; kapanışın koduna çevirip çağırırız
+fn _kapanis_siralama_sarici(eleman_tipi: text) -> text {
+    var ad = "@\"sirala_k.{eleman_tipi}\""
+    var lt = _llvm_tipi(eleman_tipi)
+    var x = _kutu_cevir_satiri("%x", "%a", eleman_tipi)
+    var y = _kutu_cevir_satiri("%y", "%b", eleman_tipi)
+    var kod = "define internal i32 {ad}(ptr %k, i64 %a, i64 %b) \{\n{x}{y}  %yer = getelementptr inbounds i8, ptr %k, i64 8\n  %fp = load ptr, ptr %yer\n  %c = call i1 %fp(ptr %k, {lt} %x, {lt} %y)\n  %r = zext i1 %c to i32\n  ret i32 %r\n}\n"
+    if not _icinde(kod, EK_FONKSIYONLAR) {
+        _ek_fonksiyon(kod)
+    }
+    return ad
+}
+
+# liste.map / filter / any / all / count / find: liste üzerinde dönen bir döngü, her elemanda kapanışı çağırır
+fn _liste_lambda_uret(e: parser.Dugum) -> text {
+    use change SAYAC
+    var ad = e.deger
+    var nesne = e.cocuklar[1]
+    var fd = e.cocuklar[2].cocuklar[1]
+    var eleman = _ic(nesne.tip)
+    var r_tip = tipler.fn_donusu(fd.tip)
+    var l = _ifade(nesne)
+    var k = _ifade(fd)
+    var yer = _yeni()
+    var fp = _yeni()
+    _yaz("{yer} = getelementptr inbounds i8, ptr {k}, i64 8")
+    _yaz("{fp} = load ptr, ptr {yer}")
+    var n = _liste_uzunlugu(l)
+    SAYAC = SAYAC + 1
+    var no = SAYAC
+    var i_yer = "%\"liste_i.{no}\""
+    var s_yer = "%\"liste_sonuc.{no}\""
+    var b_yer = "%\"liste_bulundu.{no}\""
+    _alloca_ekle("  {i_yer} = alloca i64")
+    _yaz("store i64 0, ptr {i_yer}")
+    var sonuc_liste = ""
+    if ad is "map" or ad is "filter" {
+        var tur = _eleman_turu(eleman)
+        if ad is "map" {
+            tur = _eleman_turu(r_tip)
+        }
+        sonuc_liste = _yeni()
+        _yaz("{sonuc_liste} = call ptr @liste_yeni(i64 {tur}, i64 {n})")
+    } else if ad is "count" {
+        _alloca_ekle("  {s_yer} = alloca i64")
+        _yaz("store i64 0, ptr {s_yer}")
+    } else if ad is "find" {
+        _alloca_ekle("  {s_yer} = alloca i64")
+        _alloca_ekle("  {b_yer} = alloca i1")
+        _yaz("store i64 0, ptr {s_yer}")
+        _yaz("store i1 false, ptr {b_yer}")
+    } else {
+        _alloca_ekle("  {b_yer} = alloca i1")
+        if ad is "all" {
+            _yaz("store i1 true, ptr {b_yer}")
+        } else {
+            _yaz("store i1 false, ptr {b_yer}")
+        }
+    }
+    var kontrol = _etiket("liste_kontrol")
+    var govde = _etiket("liste_govde")
+    var ilerle = _etiket("liste_ilerle")
+    var son = _etiket("liste_son")
+    _yaz("br label %{kontrol}")
+    _blok_baslat(kontrol)
+    var i = _yeni()
+    var devam = _yeni()
+    _yaz("{i} = load i64, ptr {i_yer}")
+    _yaz("{devam} = icmp slt i64 {i}, {n}")
+    _yaz("br i1 {devam}, label %{govde}, label %{son}")
+    _blok_baslat(govde)
+    var sira = _yeni()
+    _yaz("{sira} = add i64 {i}, 1")
+    var kutu = _liste_eleman_oku(l, sira, e.satir, eleman)
+    var v = _kutudan(kutu, eleman)
+    var r = _yeni()
+    _yaz("{r} = call {_llvm_tipi(r_tip)} {fp}(ptr {k}, {_llvm_tipi(eleman)} {v})")
+    if ad is "map" {
+        _yaz("call void @liste_ekle(ptr {sonuc_liste}, i64 {_kutuya(r, r_tip)})")       # sonucun sahipliği listeye
+    } else {
+        var evet = _etiket("liste_evet")
+        if ad is "all" {
+            _yaz("br i1 {r}, label %{ilerle}, label %{evet}")
+        } else {
+            _yaz("br i1 {r}, label %{evet}, label %{ilerle}")
+        }
+        _blok_baslat(evet)
+        if ad is "filter" {
+            if _sayacli(eleman) {
+                _tut(v, eleman)
+            }
+            _yaz("call void @liste_ekle(ptr {sonuc_liste}, i64 {kutu})")
+            _yaz("br label %{ilerle}")
+        } else if ad is "count" {
+            var c = _yeni()
+            var c2 = _yeni()
+            _yaz("{c} = load i64, ptr {s_yer}")
+            _yaz("{c2} = add i64 {c}, 1")
+            _yaz("store i64 {c2}, ptr {s_yer}")
+            _yaz("br label %{ilerle}")
+        } else if ad is "find" {
+            if _sayacli(eleman) {
+                _tut(v, eleman)
+            }
+            _yaz("store i64 {kutu}, ptr {s_yer}")
+            _yaz("store i1 true, ptr {b_yer}")
+            _yaz("br label %{son}")
+        } else if ad is "any" {
+            _yaz("store i1 true, ptr {b_yer}")
+            _yaz("br label %{son}")
+        } else {
+            _yaz("store i1 false, ptr {b_yer}")
+            _yaz("br label %{son}")
+        }
+    }
+    if ad is "map" {
+        _yaz("br label %{ilerle}")
+    }
+    _blok_baslat(ilerle)
+    var i2 = _yeni()
+    _yaz("{i2} = add i64 {i}, 1")
+    _yaz("store i64 {i2}, ptr {i_yer}")
+    _yaz("br label %{kontrol}")
+    _blok_baslat(son)
+    _gecici_birak(fd, k)
+    var t = ""
+    if ad is "map" or ad is "filter" {
+        t = sonuc_liste
+    } else if ad is "count" {
+        t = _yeni()
+        _yaz("{t} = load i64, ptr {s_yer}")
+    } else if ad is "find" {
+        var bulundu = _yeni()
+        var kb = _yeni()
+        _yaz("{kb} = load i64, ptr {s_yer}")
+        _yaz("{bulundu} = load i1, ptr {b_yer}")
+        var yedek_d = e.cocuklar[3]
+        if yedek_d.tur is "Bos" {
+            t = _kutudan(kb, eleman)                 # bulunamadıysa 0 → none
+        } else {
+            var var_b = _etiket("bulundu")
+            var yok_b = _etiket("bulunamadi")
+            var bitis = _etiket("find_son")
+            _yaz("br i1 {bulundu}, label %{var_b}, label %{yok_b}")
+            _blok_baslat(var_b)
+            var v1 = _kutudan(kb, eleman)
+            var var_son = SIMDIKI_BLOK
+            _yaz("br label %{bitis}")
+            _blok_baslat(yok_b)
+            var v2 = _donustur(_ifade(yedek_d), yedek_d.tip, eleman)
+            if _sayacli(eleman) and not _sahipli_mi(yedek_d) {
+                _tut(v2, eleman)
+            }
+            var yok_son = SIMDIKI_BLOK
+            _yaz("br label %{bitis}")
+            _blok_baslat(bitis)
+            t = _yeni()
+            _yaz("{t} = phi {_llvm_tipi(eleman)} [ {v1}, %{var_son} ], [ {v2}, %{yok_son} ]")
+        }
+    } else {
+        t = _yeni()
+        _yaz("{t} = load i1, ptr {b_yer}")
+    }
+    _gecici_birak(nesne, l)
+    return t
+}
+
+# Adı olan bir fonksiyonu değer olarak vermek: onu çağıran küçük bir sarıcı + boş kapanış
+fn _fonksiyon_degeri_uret(e: parser.Dugum) -> text {
+    _kapanis_bildirimleri()
+    var f = tipler.FONKSIYONLAR[e.deger]
+    var sarici = "@\"fdeger.{e.deger}\""
+    var imza: [text] = ["ptr %kapanis"]
+    var argler: [text] = []
+    repeat i from 1 to f.p_tipler.length {
+        imza.add("{_llvm_tipi(f.p_tipler[i])} %a{i}")
+        argler.add("{_llvm_tipi(f.p_tipler[i])} %a{i}")
+    }
+    var cagri = "@\"f.{e.deger}\"({argler.join(", ")})"
+    var govde = ""
+    if f.donus is "void" {
+        govde = "  call void {cagri}\n  ret void\n"
+    } else {
+        govde = "  %r = call {_llvm_tipi(f.donus)} {cagri}\n  ret {_llvm_tipi(f.donus)} %r\n"
+    }
+    var kod = "define internal {_llvm_tipi(f.donus)} {sarici}({imza.join(", ")}) \{\n{govde}}\n"
+    if not _icinde(kod, EK_FONKSIYONLAR) {
+        _ek_fonksiyon(kod)
+    }
+    var k = _yeni()
+    _yaz("{k} = call ptr @kapanis_yeni(ptr {sarici}, i64 0)")
+    return k
+}
+
+# f(x): kapanışın kod adresini al, kapanışla birlikte çağır
+fn _deger_cagrisi_uret(e: parser.Dugum) -> text {
+    var deger_d = e.cocuklar[1]
+    var k = _ifade(deger_d)
+    var ps = tipler.fn_parametreleri(deger_d.tip)
+    var donus = tipler.fn_donusu(deger_d.tip)
+    var a = _arguman_listesi(ps, e.cocuklar[2].cocuklar)
+    var yer = _yeni()
+    var fp = _yeni()
+    _yaz("{yer} = getelementptr inbounds i8, ptr {k}, i64 8")
+    _yaz("{fp} = load ptr, ptr {yer}")
+    var parcalar: [text] = ["ptr {k}"]
+    repeat i from 1 to a.parcalar.length {
+        parcalar.add(a.parcalar[i])
+    }
+    var t = ""
+    if donus is "void" {
+        _yaz("call void {fp}({parcalar.join(", ")})")
+    } else {
+        t = _yeni()
+        _yaz("{t} = call {_llvm_tipi(donus)} {fp}({parcalar.join(", ")})")
+    }
+    _gecicileri_birak(a)
+    _gecici_birak(deger_d, k)
+    return t
+}
+
+# =====================================================================
+#  HATALAR: fail · try · do/catch · else:
+#  Hata, iş parçacığına özel bir yerde (çalışma kütüphanesi) bekler: hata_koy / hata_al.
+#  Hata verebilen her çağrıdan sonra bakılır; varsa en yakın catch'e atlanır ya da fonksiyondan çıkılır.
+# =====================================================================
+fn _hata_bildirimleri() {
+    _ek_bildir("declare ptr @hata_al()")
+    _ek_bildir("declare void @hata_koy(ptr)")
+    _ek_bildir("declare void @hata_yakalanmadi(ptr, i64)")
+}
+
+# h: sahiplenilmiş hata mesajı. Bu blok burada biter (atlama / dönüş).
+fn _hata_isle(h: text, satir: int) {
+    _hata_bildirimleri()
+    if YAKALAYICILAR.length > 0 {                    # en yakın do/catch
+        var y = YAKALAYICILAR[YAKALAYICILAR.length]
+        var eski = _yeni()
+        _yaz("{eski} = load ptr, ptr {y.adres}")
+        _yaz("call void @birak(ptr {eski})")
+        _yaz("store ptr {h}, ptr {y.adres}")
+        _yaz("br label %{y.etiket}")
+        return
+    }
+    if ANA_PROGRAM {                                 # ana programda yakalanmadı: anlaşılır mesajla dur
+        _yaz("call void @hata_yakalanmadi(ptr {h}, i64 {satir})")
+        _yaz("unreachable")
+        return
+    }
+    _yaz("call void @hata_koy(ptr {h})")             # fonksiyondan çık, hata çağırana gitsin
+    _yerelleri_birak()
+    if DONUS_TIPI is "void" {
+        _yaz("ret void")
+    } else {
+        _yaz("ret {_llvm_tipi(DONUS_TIPI)} {_sifir_degeri(DONUS_TIPI)}")
+    }
+}
+
+# try f(...)
+fn _dene(e: parser.Dugum) -> text {
+    _hata_bildirimleri()
+    var v = _ifade(e.cocuklar[1])
+    var h = _yeni()
+    var var_mi = _yeni()
+    _yaz("{h} = call ptr @hata_al()")
+    _yaz("{var_mi} = icmp ne ptr {h}, null")
+    var hata_b = _etiket("hata_var")
+    var devam_b = _etiket("hata_yok")
+    _yaz("br i1 {var_mi}, label %{hata_b}, label %{devam_b}")
+    _blok_baslat(hata_b)
+    _hata_isle(h, e.satir)
+    _blok_baslat(devam_b)
+    return v
+}
+
+# f(...) else: yedek  (f hata verebilir)
+fn _hatali_yedek(e: parser.Dugum) -> text {
+    _hata_bildirimleri()
+    var tip = e.tip
+    var yedek_d = e.cocuklar[2]
+    var v = _ifade(e.cocuklar[1])
+    var h = _yeni()
+    var var_mi = _yeni()
+    _yaz("{h} = call ptr @hata_al()")
+    _yaz("{var_mi} = icmp ne ptr {h}, null")
+    var tamam_b = _etiket("hata_yok")
+    var yedek_b = _etiket("hata_var")
+    var son = _etiket("yedek_son")
+    _yaz("br i1 {var_mi}, label %{yedek_b}, label %{tamam_b}")
+    _blok_baslat(tamam_b)
+    var tamam_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(yedek_b)
+    _yaz("call void @birak(ptr {h})")                # hata mesajı kullanılmadı
+    var v2 = _donustur(_ifade(yedek_d), yedek_d.tip, tip)
+    if _sayacli(tip) and not _sahipli_mi(yedek_d) {
+        _tut(v2, tip)
+    }
+    var yedek_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+    var t = _yeni()
+    _yaz("{t} = phi {_llvm_tipi(tip)} [ {v}, %{tamam_son} ], [ {v2}, %{yedek_son} ]")
+    return t
+}
+
+# do { ... } catch hata { ... }
+fn _yakala(k: parser.Dugum) {
+    use change YAKALAYICILAR
+    use change SAYAC
+    SAYAC = SAYAC + 1
+    var adres = _yerel_ayir("gizli_hata{SAYAC}", "text")
+    var yakala_b = _etiket("catch")
+    var son = _etiket("catch_son")
+    YAKALAYICILAR.add(Yakalayici(etiket: yakala_b, adres: adres))
+    _blok(k.cocuklar[1].cocuklar)
+    YAKALAYICILAR.remove(YAKALAYICILAR.length)
+    _yaz("br label %{son}")
+    _blok_baslat(yakala_b)
+    var onceki = KAPSAM
+    _kapsam_koy(k.deger, Adres(adres: adres, tip: "text"))
+    _blok(k.cocuklar[2].cocuklar)
+    _kapsam_ayarla(onceki)
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+}
+
+# parallel { is1  is2 ... }: her komut ayrı bir çekirdekte
+fn _paralel_blok(k: parser.Dugum) {
+    use change SAYAC
+    var gorevler = k.cocuklar[1].cocuklar
+    # 'var x = ...' işlerinin değişkenleri önce burada oluşturulur (iş onlara yazar, bloktan sonra da kullanılır)
+    repeat i from 1 to gorevler.length {
+        var g = gorevler[i]
+        if g.tur is "DegiskenTanimi" {
+            if ANA_PROGRAM and BLOK_DERINLIGI is 0 and _icinde(g.deger, GERCEK_GLOBALLER) {
+                _kapsam_koy(g.deger, Adres(adres: "@\"g.{g.deger}\"", tip: g.tip))
+            } else {
+                _yerel_ayir(g.deger, g.tip)
+            }
+        }
+    }
+    var bos: [text] = []
+    var adlar = _yakalananlar(k.cocuklar[1], bos)
+    repeat i from 1 to gorevler.length {
+        if gorevler[i].tur is "DegiskenTanimi" and not _icinde(gorevler[i].deger, adlar) {
+            adlar.add(gorevler[i].deger)
+        }
+    }
+    var ortam_adr = _ortam_hazirla(adlar)
+    var tipler_ = _kapsam_tipleri(adlar)
+    SAYAC = SAYAC + 1
+    var no = SAYAC
+    var isler: [text] = []
+    var durum = _durum_al()
+    repeat j from 1 to gorevler.length {
+        var g = gorevler[j]
+        var ad = "@\"gorev.{no}.{j}\""
+        _isci_baslat(adlar, tipler_, durum.tip_icinde)
+        if g.tur is "DegiskenTanimi" {
+            var a = KAPSAM[g.deger]
+            var e = g.cocuklar[2]
+            var deger = _donustur(_ifade(e), e.tip, g.tip)
+            if _sayacli(g.tip) {
+                _metin_sakla(a.adres, deger, _sahipli_mi(e), g.tip)
+            } else {
+                _yaz("store {_llvm_tipi(g.tip)} {deger}, ptr {a.adres}")
+            }
+        } else {
+            _komut(g)
+        }
+        _ek_fonksiyon(_isci_bitir(ad))
+        isler.add("ptr {ad}")
+    }
+    _durum_ver(durum)
+    _ust_ekle("@\"paralel.{no}.isler\" = private constant [{isler.length} x ptr] [{isler.join(", ")}]")
+    _yaz("call void @paralel_isler(ptr @\"paralel.{no}.isler\", ptr {ortam_adr}, i64 {isler.length})")
+}
+
+# parallel repeat'in içinde L[i] = x: liste baştan kendine ait yapıldı, her tur kendi yerine yazar (kopyalama yok)
+fn _paralel_eleman_ata(k: parser.Dugum) {
+    var liste_d = k.cocuklar[1]
+    var eleman_tipi = _ic(liste_d.tip)
+    var kutu = _listeye_hazirla(k.cocuklar[3], eleman_tipi)
+    var sira = _ifade(k.cocuklar[2])
+    var a = _adres_bul(liste_d.deger)
+    var p = _yeni()
+    _yaz("{p} = load ptr, ptr {a.adres}")
+    if _sayacli(eleman_tipi) {
+        _yaz("call void @liste_koy(ptr {p}, i64 {sira}, i64 {kutu}, i64 {k.satir})")
+    } else {
+        var n = _liste_uzunlugu(p)
+        var veri = _liste_alani(p, 32, "ptr")
+        var s0 = _sinir_kontrolu(p, sira, n, k.satir)
+        var ey = _yeni()
+        _eleman_sakla(ey, veri, s0, kutu, eleman_tipi)
+    }
+}
+
+fn _fonksiyon_baslat(donus_tipi: text, ana_program: bool) {
+    use change GOVDE
+    use change ALLOCALAR
+    use change KAPSAM
+    use change DONUS_TIPI
+    use change ANA_PROGRAM
+    use change SIMDIKI_BLOK
+    use change METIN_YERELLERI
+    use change BLOK_DERINLIGI
+    use change DONGULER
+    use change YEREL_WHENLER
+    use change ARENA_YERELLERI
+    use change ARENA_BASLANGIC
+    use change YAKALAYICILAR
+    YAKALAYICILAR = []
+    ARENA_YERELLERI = []
+    ARENA_BASLANGIC = []
+    GOVDE = []
+    ALLOCALAR = []
+    KAPSAM = {}
+    DONUS_TIPI = donus_tipi
+    ANA_PROGRAM = ana_program
+    SIMDIKI_BLOK = "giris"
+    METIN_YERELLERI = []
+    BLOK_DERINLIGI = 0
+    DONGULER = []
+    YEREL_WHENLER = []
+}
+
+# Yerel değişken yerleri en başa konur: LLVM onları işlemci yazmaçlarına taşıyabilir
+fn _fonksiyon_bitir(baslik: text) -> text {
+    var satirlar = [baslik, "giris:"]
+    repeat i from 1 to ALLOCALAR.length {
+        satirlar.add(ALLOCALAR[i])
+    }
+    repeat i from 1 to GOVDE.length {
+        satirlar.add(GOVDE[i])
+    }
+    satirlar.add("\}")
+    satirlar.add("")
+    return satirlar.join("\n")
+}
+
+# Bir fonksiyon ya da bir metot (tip_adi verilmişse; nesne gizli ilk parametre %"self" olur)
+fn _fonksiyon(k: parser.Dugum, f: tipler.Fonksiyon, tip_adi: text) -> text {
+    use change TIP_ICINDE
+    _fonksiyon_baslat(f.donus, false)
+    TIP_ICINDE = tip_adi
+    var parametreler: [text] = []
+    var ad = "@\"f.{k.deger}\""
+    if tip_adi.length > 0 {
+        parametreler.add("ptr %\"self\"")
+        ad = "@\"m.{tip_adi}.{k.deger}\""
+    }
+    repeat i from 1 to f.p_adlar.length {
+        parametreler.add("{_llvm_tipi(f.p_tipler[i])} %\"p.{f.p_adlar[i]}\"")
+    }
+    var baslik = "define internal {_llvm_tipi(f.donus)} {ad}({parametreler.join(", ")}) \{"
+    repeat i from 1 to f.p_adlar.length {             # parametreleri değiştirilebilir yerel değişkenlere kopyala
+        var a = f.p_adlar[i]
+        var t = f.p_tipler[i]
+        var adres = _yerel_ayir(a, t)
+        _yaz("store {_llvm_tipi(t)} %\"p.{a}\", ptr {adres}")
+        if _sayacli(t) {
+            _tut("%\"p.{a}\"", t)
+        }
+    }
+    var govde = k.cocuklar[3].cocuklar
+    repeat i from 1 to govde.length {
+        _komut(govde[i])
+    }
+    if f.donus is "void" {
+        _yerelleri_birak()
+        _yaz("ret void")
+    } else {
+        _yaz("unreachable")
+    }
+    TIP_ICINDE = ""
+    return _fonksiyon_bitir(baslik)
+}
+
+# { ad, alan sayısı, alan adları, alan türleri, çeşit numarası }  (calisma.c: TurBilgisi)
+fn _c_metni(s: text, ad: text) {
+    var k = _kacir(s)
+    _ust_ekle("{ad} = private unnamed_addr constant [{k.bayt} x i8] c\"{k.yazi}\"")
+}
+
+fn _tur_tablosu(t: text, gorunen_ad: text, alan_adlari: [text], alan_tipleri: [text], cesit: int) {
+    _c_metni(gorunen_ad, "@\"tur.{t}.ad\"")
+    var adlar: [text] = []
+    var turler: [text] = []
+    repeat i from 1 to alan_adlari.length {
+        _c_metni(alan_adlari[i], "@\"tur.{t}.alan{i - 1}\"")
+        adlar.add("ptr @\"tur.{t}.alan{i - 1}\"")
+        turler.add("i64 {_eleman_turu(alan_tipleri[i])}")
+    }
+    var n = adlar.length
+    _ust_ekle("@\"tur.{t}.adlar\" = private constant [{n} x ptr] [{adlar.join(", ")}]")
+    _ust_ekle("@\"tur.{t}.turler\" = private constant [{n} x i64] [{turler.join(", ")}]")
+    _ust_ekle("@\"tur.{t}\" = private constant \{ ptr, i64, ptr, ptr, i64 \} \{ ptr @\"tur.{t}.ad\", i64 {n}, ptr @\"tur.{t}.adlar\", ptr @\"tur.{t}.turler\", i64 {cesit} \}")
+}
+
+fn _alan_adresi(nesne: text, sira: int) -> text {    # sira. alan: sayaç ve tür bilgisinden sonra, 8'er bayt
+    var a = _yeni()
+    _yaz("{a} = getelementptr inbounds i8, ptr {nesne}, i64 {16 + 8 * sira}")
+    return a
+}
+
+fn _yerel_ayir(ad: text, tip: text) -> text {
+    use change SAYAC
+    use change METIN_YERELLERI
+    use change ARENA_YERELLERI
+    use change KAPSAM
+    SAYAC = SAYAC + 1
+    var adres = "%\"v.{ad}.{SAYAC}\""
+    _alloca_ekle("  {adres} = alloca {_llvm_tipi(tip)}")
+    if _sayacli(tip) {
+        _alloca_ekle("  store ptr null, ptr {adres}")      # boş başlar; birak(null) bir şey yapmaz
+        METIN_YERELLERI.add(Adres(adres: adres, tip: tip))
+        if ARENA_BASLANGIC.length > 0 {
+            ARENA_YERELLERI.add(Adres(adres: adres, tip: tip))
+        }
+    }
+    KAPSAM[ad] = Adres(adres: adres, tip: tip)
+    return adres
+}
+
+fn _adres_bul(ad: text) -> Adres {
+    if KAPSAM.has(ad) {
+        return KAPSAM[ad]
+    }
+    if TIP_ICINDE.length > 0 {                       # metodun içinde bir alan adı: nesnenin içindeki yeri
+        var b = tipler.TIPLER[TIP_ICINDE]
+        var no = _sira(ad, b.alan_adlari)
+        if no > 0 {
+            return Adres(adres: _alan_adresi("%\"self\"", no - 1), tip: b.alan_tipleri[no])
+        }
+    }
+    return Adres(adres: "@\"g.{ad}\"", tip: tipler.ANA[ad].tip)
+}
+
+fn _kapsam_ayarla(k: {text: Adres}) {
+    use change KAPSAM
+    KAPSAM = k
+}
+
+fn _kapsam_koy(ad: text, a: Adres) {
+    use change KAPSAM
+    KAPSAM[ad] = a
+}
+
+# =====================================================================
+#  KOMUTLAR
+# =====================================================================
+fn _komut(k: parser.Dugum) {
+    var tur = k.tur
+    if tur is "DegiskenTanimi" {
+        var tip = k.tip
+        var adres = ""
+        if ANA_PROGRAM and BLOK_DERINLIGI is 0 and _icinde(k.deger, GERCEK_GLOBALLER) {
+            adres = "@\"g.{k.deger}\""
+            _kapsam_koy(k.deger, Adres(adres: adres, tip: tip))
+        } else {
+            adres = _yerel_ayir(k.deger, tip)
+        }
+        var e = k.cocuklar[2]
+        var deger = _donustur(_ifade(e), e.tip, tip)
+        if _sayacli(tip) {
+            _metin_sakla(adres, deger, _sahipli_mi(e), tip)
+        } else {
+            _yaz("store {_llvm_tipi(tip)} {deger}, ptr {adres}")
+        }
+    } else if tur is "Atama" {
+        var a = _adres_bul(k.deger)
+        var e = k.cocuklar[1]
+        var deger = _donustur(_ifade(e), e.tip, a.tip)
+        if _sayacli(a.tip) {
+            _metin_sakla(a.adres, deger, _sahipli_mi(e), a.tip)
+        } else {
+            _yaz("store {_llvm_tipi(a.tip)} {deger}, ptr {a.adres}")
+        }
+        _degisti(a.adres)
+    } else if tur is "ElemanAtama" {
+        _eleman_ata(k)
+    } else if tur is "WhenKomutu" {
+        _when_komutu(k)
+    } else if tur is "ArenaBlok" {
+        _arena_blok(k)
+    } else if tur is "ParalelBlok" {
+        _paralel_blok(k)
+    } else if tur is "ParalelTekrar" {
+        _paralel_tekrar(k)
+    } else if tur is "Pencere" {
+        _pencere(k)
+    } else if tur is "MatchKomutu" {
+        _match_komutu(k)
+    } else if tur is "AlanAtama" {                   # nesne.alan = x
+        var nesne = k.cocuklar[1]
+        var b = tipler.TIPLER[nesne.tip]
+        var no = _sira(k.deger, b.alan_adlari)
+        var kutu = _listeye_hazirla(k.cocuklar[2], b.alan_tipleri[no])
+        var p2 = _yazilabilir_d(nesne)
+        _yaz("call void @nesne_alan_koy(ptr {p2}, i64 {no - 1}, i64 {kutu})")
+        _degisti(_kok_adresi(nesne))
+    } else if tur is "UseKomutu" {
+        if not tipler.IZINLER.has(k.deger) {         # use files: sadece bir söz, kod üretmez
+            _kapsam_koy(k.deger, Adres(adres: "@\"g.{k.deger}\"", tip: tipler.ANA[k.deger].tip))
+        }
+    } else if tur is "Donus" {
+        var e = k.cocuklar[1]
+        if e.tur is "Bos" {
+            _yerelleri_birak()
+            _yaz("ret void")
+        } else {
+            var deger = _donustur(_ifade(e), e.tip, DONUS_TIPI)
+            if _sayacli(DONUS_TIPI) and not _sahipli_mi(e) {
+                _tut(deger, DONUS_TIPI)
+            }
+            _yerelleri_birak()
+            _yaz("ret {_llvm_tipi(DONUS_TIPI)} {deger}")
+        }
+        _blok_baslat(_etiket("olu"))
+    } else if tur is "IfadeKomutu" {
+        var v = _ifade(k.cocuklar[1])
+        _gecici_birak(k.cocuklar[1], v)
+    } else if tur is "Eger" {
+        _eger(k)
+    } else if tur is "TekrarSayi" {
+        _tekrar_sayi(k)
+    } else if tur is "TekrarSurece" {
+        _dongu_iskeleti(DonguBilgisi(tur: "surece", kosul: k.cocuklar[1]), k.cocuklar[2].cocuklar)
+    } else if tur is "TekrarSayac" {
+        _tekrar_sayac(k)
+    } else if tur is "HataVer" {                     # fail "mesaj"
+        var m = _ifade(k.cocuklar[1])
+        if not _sahipli_mi(k.cocuklar[1]) {
+            _tut(m, "text")
+        }
+        _hata_isle(m, k.satir)
+        _blok_baslat(_etiket("olu"))
+    } else if tur is "Yakala" {                      # do { } catch hata { }
+        _yakala(k)
+    } else if tur is "Dur" {
+        _atla(DONGULER[DONGULER.length].cikis)
+    } else if tur is "Atla" {
+        _atla(DONGULER[DONGULER.length].ilerle)
+    }
+}
+
+# Bir { } bloğu: blokta oluşturulan değişkenler blok bitince unutulur
+fn _blok(komutlar: [parser.Dugum]) {
+    use change BLOK_DERINLIGI
+    use change YEREL_WHENLER
+    var onceki_kapsam = KAPSAM
+    var onceki_when_sayisi = YEREL_WHENLER.length
+    BLOK_DERINLIGI = BLOK_DERINLIGI + 1
+    repeat i from 1 to komutlar.length {
+        _komut(komutlar[i])
+    }
+    BLOK_DERINLIGI = BLOK_DERINLIGI - 1
+    _kapsam_ayarla(onceki_kapsam)
+    repeat while YEREL_WHENLER.length > onceki_when_sayisi {     # blokta yazılan when'ler blokla biter
+        YEREL_WHENLER.remove(YEREL_WHENLER.length)
+    }
+}
+
+# if / else
+fn _eger(k: parser.Dugum) {
+    var kosul = _ifade(k.cocuklar[1])
+    var dogru = _etiket("dogru")
+    var yanlis = _etiket("yanlis")
+    var son = _etiket("ifson")
+    var degilse_var = _dolu(k.cocuklar[3])
+    var hedef = son
+    if degilse_var {
+        hedef = yanlis
+    }
+    _yaz("br i1 {kosul}, label %{dogru}, label %{hedef}")
+    _blok_baslat(dogru)
+    _blok(k.cocuklar[2].cocuklar)
+    _yaz("br label %{son}")
+    if degilse_var {
+        _blok_baslat(yanlis)
+        _blok(k.cocuklar[3].cocuklar)
+        _yaz("br label %{son}")
+    }
+    _blok_baslat(son)
+}
+
+# =====================================================================
+#  DÖNGÜLER
+# =====================================================================
+#     kontrol:   şart doğru mu?  evet → govde, hayır → cikis
+#     govde:     ...komutlar...
+#     ilerle:    (sayacı artır) → kontrol          ← skip buraya atlar
+#     cikis:                                      ← stop buraya atlar
+fn _dongu_iskeleti(b: DonguBilgisi, govde: [parser.Dugum]) {
+    use change DONGULER
+    var kontrol = _etiket("kontrol")
+    var govde_e = _etiket("govde")
+    var ilerle = _etiket("ilerle")
+    var cikis = _etiket("cikis")
+    _yaz("br label %{kontrol}")
+    _blok_baslat(kontrol)
+    var sart = _dongu_kontrol(b)
+    _yaz("br i1 {sart}, label %{govde_e}, label %{cikis}")
+    _blok_baslat(govde_e)
+    DONGULER.add(Dongu(ilerle: ilerle, cikis: cikis))
+    _blok(govde)
+    DONGULER.remove(DONGULER.length)
+    _yaz("br label %{ilerle}")
+    _blok_baslat(ilerle)
+    _dongu_ilerle(b, cikis)
+    _yaz("br label %{kontrol}")
+    _blok_baslat(cikis)
+}
+
+fn _dongu_kontrol(b: DonguBilgisi) -> text {
+    if b.tur is "surece" {
+        return _ifade(b.kosul)
+    }
+    if b.tur is "sayi" {
+        var v = _yeni()
+        var s = _yeni()
+        _yaz("{v} = load i64, ptr {b.sayac}")
+        _yaz("{s} = icmp slt i64 {v}, {b.kac}")
+        return s
+    }
+    var v = _yeni()
+    var s = _yeni()
+    var sn = _yeni()
+    _yaz("{v} = load i64, ptr {b.i}")
+    _yaz("{sn} = load i64, ptr {b.son}")
+    if b.yon is "ileri" {
+        _yaz("{s} = icmp sle i64 {v}, {sn}")
+    } else if b.yon is "geri" {
+        _yaz("{s} = icmp sge i64 {v}, {sn}")
+    } else {
+        var a = _yeni()
+        var ileri = _yeni()
+        var ust = _yeni()
+        var alt = _yeni()
+        _yaz("{a} = load i64, ptr {b.adim}")
+        _yaz("{ileri} = icmp sgt i64 {a}, 0")
+        _yaz("{ust} = icmp sle i64 {v}, {sn}")
+        _yaz("{alt} = icmp sge i64 {v}, {sn}")
+        _yaz("{s} = select i1 {ileri}, i1 {ust}, i1 {alt}")
+    }
+    return s
+}
+
+fn _dongu_ilerle(b: DonguBilgisi, cikis: text) {
+    if b.tur is "surece" {
+        return
+    }
+    if b.tur is "sayi" {
+        var v = _yeni()
+        var y = _yeni()
+        _yaz("{v} = load i64, ptr {b.sayac}")
+        _yaz("{y} = add nsw i64 {v}, 1")           # sayac < kac: taşmaz
+        _yaz("store i64 {y}, ptr {b.sayac}")
+        return
+    }
+    var v = _yeni()
+    _yaz("{v} = load i64, ptr {b.i}")
+    var y = ""
+    if b.yon is "calisirken" {
+        var a = _yeni()
+        _yaz("{a} = load i64, ptr {b.adim}")
+        y = _tam_sayi_islem("add", v, a, b.satir)
+    } else {
+        # TAŞMASIZ İLERLEME: kalan mesafe bir adımdan kısaysa döngü biter; değilse i + adım taşamaz
+        var sn = _yeni()
+        var kalan = _yeni()
+        var bitti = _yeni()
+        _yaz("{sn} = load i64, ptr {b.son}")
+        if b.yon is "ileri" {
+            _yaz("{kalan} = sub i64 {sn}, {v}")
+        } else {
+            _yaz("{kalan} = sub i64 {v}, {sn}")
+        }
+        _yaz("{bitti} = icmp ult i64 {kalan}, {b.buyukluk}")
+        var devam = _etiket("artir")
+        _yaz("br i1 {bitti}, label %{cikis}, label %{devam}")
+        _blok_baslat(devam)
+        y = _yeni()
+        var komut = "sub"
+        if b.yon is "ileri" {
+            komut = "add"
+        }
+        _yaz("{y} = {komut} nsw i64 {v}, {b.buyukluk}")
+    }
+    _yaz("store i64 {y}, ptr {b.i}")
+}
+
+# repeat 3 { }: gizli bir sayaç 0'dan başlar, 3 olunca durur
+fn _tekrar_sayi(k: parser.Dugum) {
+    var kac = _ifade(k.cocuklar[1])
+    var sayac = _yerel_ayir("gizli_sayac{SAYAC}", "int")
+    _yaz("store i64 0, ptr {sayac}")
+    _dongu_iskeleti(DonguBilgisi(tur: "sayi", kosul: k, sayac: sayac, kac: kac), k.cocuklar[2].cocuklar)
+}
+
+# repeat i from A to B step C { }
+fn _tekrar_sayac(k: parser.Dugum) {
+    var bas = _ifade(k.cocuklar[1])
+    var son_deger = _ifade(k.cocuklar[2])
+    var son = _yerel_ayir("gizli_son{SAYAC}", "int")
+    _yaz("store i64 {son_deger}, ptr {son}")
+    var adim_d = k.cocuklar[3]
+    var adim = "1"
+    var yon = "ileri"
+    var buyukluk = 1
+    if adim_d.tur is "Bos" {
+        adim = "1"
+    } else if adim_d.tur is "Sayi" or (adim_d.tur is "TekliIslem" and adim_d.cocuklar[1].tur is "Sayi") {
+        adim = _ifade(adim_d)
+        var deger = 0
+        if adim_d.tur is "Sayi" {
+            deger = int(adim_d.deger)
+        } else {
+            deger = 0 - int(adim_d.cocuklar[1].deger)
+        }
+        if deger > 0 {
+            yon = "ileri"
+            buyukluk = deger
+        } else {
+            yon = "geri"
+            buyukluk = 0 - deger
+        }
+    } else {                                         # adım bir değişken: yönü çalışırken anlaşılır
+        var adim_deger = _ifade(adim_d)
+        var adim_yer = _yerel_ayir("gizli_adim{SAYAC}", "int")
+        _yaz("store i64 {adim_deger}, ptr {adim_yer}")
+        var c = _yeni()
+        _yaz("{c} = icmp eq i64 {adim_deger}, 0")
+        var hata_b = _etiket("adimsifir")
+        var devam_b = _etiket("adimtamam")
+        _yaz("br i1 {c}, label %{hata_b}, label %{devam_b}")
+        _blok_baslat(hata_b)
+        _yaz("call void @hata_sifir_adim(i64 {k.satir})")
+        _yaz("unreachable")
+        _blok_baslat(devam_b)
+        adim = adim_yer
+        yon = "calisirken"
+    }
+    var onceki_kapsam = KAPSAM
+    var i = _yerel_ayir(k.deger, "int")
+    _yaz("store i64 {bas}, ptr {i}")
+    _dongu_iskeleti(DonguBilgisi(tur: "sayac", kosul: k, i: i, son: son, adim: adim, yon: yon, buyukluk: buyukluk, satir: k.satir), k.cocuklar[4].cocuklar)
+    _kapsam_ayarla(onceki_kapsam)
+}
+
+# =====================================================================
+#  İFADELER: her biri, sonucunun bulunduğu kutuyu (ya da sabit değeri) döndürür
+# =====================================================================
+fn _ifade(e: parser.Dugum) -> text {
+    var tur = e.tur
+    if tur is "Sayi" {
+        return e.deger
+    }
+    if tur is "Ondalik" {
+        return _ondalik_yazisi(e.deger)
+    }
+    if tur is "Mantiksal" {
+        return e.deger
+    }
+    if tur is "Metin" {
+        return _metin(e)
+    }
+    if tur is "Isim" {
+        var a = _adres_bul(e.deger)
+        var t = _yeni()
+        _yaz("{t} = load {_llvm_tipi(a.tip)}, ptr {a.adres}")
+        return t
+    }
+    if tur is "TekliIslem" {
+        var x = _ifade(e.cocuklar[1])
+        var t = _yeni()
+        if e.deger is "not" {
+            _yaz("{t} = xor i1 {x}, true")
+        } else if e.tip is "float" {
+            _yaz("{t} = fneg double {x}")
+        } else {
+            return _tam_sayi_islem("sub", "0", x, e.satir)
+        }
+        return t
+    }
+    if tur is "IkiliIslem" {
+        return _ikili_islem(e)
+    }
+    if tur is "Cagri" {
+        return _cagri(e)
+    }
+    if tur is "Liste" {
+        return _liste(e)
+    }
+    if tur is "SozlukDegeri" {
+        return _sozluk_degeri(e)
+    }
+    if tur is "Yok" {
+        return "null"
+    }
+    if tur is "Dene" {                               # try f(...)
+        return _dene(e)
+    }
+    if tur is "Lambda" {                             # fn(a, b) => ...
+        return _lambda_uret(e)
+    }
+    if tur is "FonksiyonDegeri" {                    # kare (değer olarak)
+        return _fonksiyon_degeri_uret(e)
+    }
+    if tur is "DegerCagrisi" {                       # f(x): f bir fonksiyon değeri
+        return _deger_cagrisi_uret(e)
+    }
+    if tur is "YedekliDeger" {
+        return _yedekli_deger(e)
+    }
+    if tur is "Erisim" {
+        return _erisim(e)
+    }
+    if tur is "Baslat" {                             # start f(...)
+        return _baslat(e)
+    }
+    if tur is "KanalYeni" {                          # channel[text]()
+        _ek_bildir("declare i64 @kanal_yeni(i64)")
+        var kn = _yeni()
+        _yaz("{kn} = call i64 @kanal_yeni(i64 {_eleman_turu(e.tip[9 to e.tip.length - 1])})")
+        return kn
+    }
+    if tur is "Olcum" {                              # measure { ... }
+        var bas = _yeni()
+        var bit = _yeni()
+        var t = _yeni()
+        _yaz("{bas} = call double @zaman()")
+        _blok(e.cocuklar[1].cocuklar)
+        _yaz("{bit} = call double @zaman()")
+        _yaz("{t} = fsub double {bit}, {bas}")
+        return t
+    }
+    if _enum_olusturma_mi(e) {
+        return _enum_olustur(e)
+    }
+    if tur is "Ozellik" {
+        var nesne = e.cocuklar[1]
+        if _kullanici_tipi_mi(nesne.tip) {
+            return _alan_oku(e)
+        }
+        if nesne.tip is "text" {
+            var m = _ifade(nesne)
+            var t = _yeni()
+            _yaz("{t} = call i64 @metin_uzunluk(ptr {m})")
+            _gecici_birak(nesne, m)
+            return t
+        }
+        var l = _ifade(nesne)
+        var n = _liste_uzunlugu(l)
+        _gecici_birak(nesne, l)
+        return n
+    }
+    if tur is "MetotCagrisi" {
+        return _metot_cagrisi(e)
+    }
+    return ""
+}
+
+fn _argumanlar(e: parser.Dugum) -> [parser.Dugum] {
+    return e.cocuklar[1].cocuklar
+}
+
+# int("abc", else: 0) → else'in değeri (yoksa "Bos")
+fn _cagri_yedegi(e: parser.Dugum) -> parser.Dugum {
+    var isimli = e.cocuklar[2].cocuklar
+    if isimli.length > 0 {
+        return isimli[1].cocuklar[1]
+    }
+    return parser.Dugum(tur: "Bos", deger: "", ek: "", cocuklar: [], satir: 0, sutun: 0)
+}
+
+# =====================================================================
+#  HAZIR FONKSİYONLAR: input, random, time, int, float, text, dosyalar...
+# =====================================================================
+fn _hazir_fonksiyon(e: parser.Dugum) -> text {
+    var t = _yeni()
+    var ad = e.deger
+    var argler = _argumanlar(e)
+    if ad is "input" {
+        var istem = "null"
+        if argler.length > 0 {
+            istem = _ifade(argler[1])
+        }
+        if e.tip is "int" {
+            _yaz("{t} = call i64 @oku_int(ptr {istem}, i64 {e.satir})")
+        } else if e.tip is "float" {
+            _yaz("{t} = call double @oku_float(ptr {istem}, i64 {e.satir})")
+        } else {
+            _yaz("{t} = call ptr @oku_satir(ptr {istem})")
+        }
+        if argler.length > 0 {
+            _gecici_birak(argler[1], istem)
+        }
+        return t
+    }
+    if ad is "random" {
+        var a = argler[1]
+        if a.tur is "Aralik" {                       # random(1 to 6) / random(0.0 to 1.0)
+            var alt = _ifade(a.cocuklar[1])
+            var ust = _ifade(a.cocuklar[2])
+            if a.tip is "float" {
+                alt = _donustur(alt, a.cocuklar[1].tip, "float")
+                ust = _donustur(ust, a.cocuklar[2].tip, "float")
+                _yaz("{t} = call double @rastgele_float(double {alt}, double {ust}, i64 {e.satir})")
+            } else {
+                _yaz("{t} = call i64 @rastgele(i64 {alt}, i64 {ust}, i64 {e.satir})")
+            }
+            return t
+        }
+        var l = _ifade(a)                            # random(liste)
+        _yaz("{t} = call i64 @liste_rastgele(ptr {l}, i64 {e.satir})")
+        var v = _kutudan(t, e.tip)
+        if _sayacli(e.tip) {
+            _tut(v, e.tip)
+        }
+        _gecici_birak(a, l)
+        return v
+    }
+    if ad is "time" {
+        _yaz("{t} = call double @zaman()")
+        return t
+    }
+    if ad is "args" {
+        _ek_bildir("declare ptr @vash_args()")
+        _yaz("{t} = call ptr @vash_args()")
+        return t
+    }
+    if ad is "code" and _tek_harf_erisimi(argler[1]) {     # code(m[i]): araya metin oluşturmadan
+        var hm = _ifade(argler[1].cocuklar[1])
+        var hi = _ifade(argler[1].cocuklar[2])
+        _ek_bildir("declare i64 @metin_harf_kodu(ptr, i64, i64)")
+        _yaz("{t} = call i64 @metin_harf_kodu(ptr {hm}, i64 {hi}, i64 {e.satir})")
+        _gecici_birak(argler[1].cocuklar[1], hm)
+        return t
+    }
+    if ad is "code" or ad is "char" {
+        var x = _ifade(argler[1])
+        if ad is "code" {
+            _yaz("{t} = call i64 @metin_kodu(ptr {x}, i64 {e.satir})")
+        } else {
+            _yaz("{t} = call ptr @harf_metni(i64 {x}, i64 {e.satir})")
+        }
+        _gecici_birak(argler[1], x)
+        return t
+    }
+    if ad is "read_bytes" or ad is "write_bytes" or ad is "bytes" {   # ikili dosyalar ve bayt dizileri
+        var bd: [text] = []
+        repeat i from 1 to argler.length {
+            bd.add(_ifade(argler[i]))
+        }
+        if ad is "read_bytes" {
+            _ek_bildir("declare ptr @dosya_bayt_oku(ptr)")
+            _yaz("{t} = call ptr @dosya_bayt_oku(ptr {bd[1]})")
+        } else if ad is "bytes" {
+            _ek_bildir("declare ptr @bayt_yeni(i64, i64)")
+            _yaz("{t} = call ptr @bayt_yeni(i64 {bd[1]}, i64 {e.satir})")
+        } else {
+            _ek_bildir("declare i32 @dosya_bayt_yaz(ptr, ptr)")
+            var c = _yeni()
+            _yaz("{c} = call i32 @dosya_bayt_yaz(ptr {bd[1]}, ptr {bd[2]})")
+            _yaz("{t} = icmp ne i32 {c}, 0")
+        }
+        repeat i from 1 to argler.length {
+            _gecici_birak(argler[i], bd[i])
+        }
+        return t
+    }
+    if ad is "read_file" or ad is "read_lines" or ad is "write_file" or ad is "append_file" or ad is "file_exists" {
+        var degerler: [text] = []
+        repeat i from 1 to argler.length {
+            degerler.add(_ifade(argler[i]))
+        }
+        if ad is "read_file" {
+            _yaz("{t} = call ptr @dosya_oku(ptr {degerler[1]})")
+        } else if ad is "read_lines" {
+            _yaz("{t} = call ptr @dosya_satirlar(ptr {degerler[1]})")
+        } else {
+            var c = _yeni()
+            if ad is "file_exists" {
+                _yaz("{c} = call i32 @dosya_var_mi(ptr {degerler[1]})")
+            } else {
+                var ekle = 0
+                if ad is "append_file" {
+                    ekle = 1
+                }
+                _yaz("{c} = call i32 @dosya_yaz(ptr {degerler[1]}, ptr {degerler[2]}, i32 {ekle})")
+            }
+            _yaz("{t} = icmp ne i32 {c}, 0")
+        }
+        repeat i from 1 to argler.length {
+            _gecici_birak(argler[i], degerler[i])
+        }
+        return t
+    }
+
+    # Çevirme: int(x) / float(x) / text(x)
+    var x_dugum = argler[1]
+    var kaynak = x_dugum.tip
+    var x = _ifade(x_dugum)
+    var hedef = ad
+    if kaynak is hedef {
+        if hedef is "text" and not _sahipli_mi(x_dugum) {
+            _tut(x, "text")
+        }
+        return x
+    }
+    var yedek = _cagri_yedegi(e)
+    if yedek.tur is not "Bos" {                      # int("abc", else: 0)
+        return _yedekli_cevirme(e, yedek, x_dugum, x)
+    }
+    if hedef is "int" {
+        if kaynak is "text" {
+            _yaz("{t} = call i64 @metin_int_cevir(ptr {x}, i64 {e.satir})")
+            _gecici_birak(x_dugum, x)
+        } else if kaynak is "float" {
+            _yaz("{t} = call i64 @float_int_cevir(double {x}, i64 {e.satir})")
+        } else {
+            _yaz("{t} = zext i1 {x} to i64")
+        }
+        return t
+    }
+    if hedef is "float" {
+        if kaynak is "text" {
+            _yaz("{t} = call double @metin_float_cevir(ptr {x}, i64 {e.satir})")
+            _gecici_birak(x_dugum, x)
+        } else {
+            _yaz("{t} = sitofp i64 {x} to double")
+        }
+        return t
+    }
+    if kaynak is "int" {
+        _yaz("{t} = call ptr @metin_int(i64 {x})")
+    } else if kaynak is "float" {
+        _yaz("{t} = call ptr @metin_float(double {x})")
+    } else {
+        var b = _yeni()
+        _yaz("{b} = zext i1 {x} to i8")
+        _yaz("{t} = call ptr @metin_bool(i8 {b})")
+    }
+    return t
+}
+
+# int(metin, else: y): çevirmeyi DENE; olmazsa yedeği kullan (iki yol phi ile birleşir)
+fn _yedekli_cevirme(e: parser.Dugum, yedek: parser.Dugum, x_dugum: parser.Dugum, x: text) -> text {
+    use change SAYAC
+    var lt = _llvm_tipi(e.deger)
+    SAYAC = SAYAC + 1
+    var yer = "%\"cevir.{SAYAC}\""
+    _alloca_ekle("  {yer} = alloca {lt}")
+    var ok = _yeni()
+    var okb = _yeni()
+    var fonk = "metin_float_dene"
+    if e.deger is "int" {
+        fonk = "metin_int_dene"
+    }
+    _yaz("{ok} = call i32 @{fonk}(ptr {x}, ptr {yer})")
+    _gecici_birak(x_dugum, x)
+    _yaz("{okb} = icmp ne i32 {ok}, 0")
+    var basarili = _etiket("cevrildi")
+    var yedek_b = _etiket("yedek")
+    var son = _etiket("cevirme_son")
+    _yaz("br i1 {okb}, label %{basarili}, label %{yedek_b}")
+    _blok_baslat(basarili)
+    var v = _yeni()
+    _yaz("{v} = load {lt}, ptr {yer}")
+    _yaz("br label %{son}")
+    _blok_baslat(yedek_b)
+    var y = _donustur(_ifade(yedek), yedek.tip, e.deger)
+    var yedek_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+    var t = _yeni()
+    _yaz("{t} = phi {lt} [ {v}, %{basarili} ], [ {y}, %{yedek_son} ]")
+    return t
+}
+
+# metin.contains / starts_with / ends_with / split / trim / replace / upper / lower / is_digit ...
+fn _metin_metodu(e: parser.Dugum) -> text {
+    var nesne = e.cocuklar[1]
+    var argler = e.cocuklar[2].cocuklar
+    var m = _ifade(nesne)
+    var degerler: [text] = []
+    repeat i from 1 to argler.length {
+        degerler.add(_ifade(argler[i]))
+    }
+    var t = _yeni()
+    var ad = e.deger
+    if ad is "contains" or ad is "starts_with" or ad is "ends_with" {
+        var fonk = "metin_bitiyor"
+        if ad is "contains" {
+            fonk = "metin_iceriyor"
+        } else if ad is "starts_with" {
+            fonk = "metin_basliyor"
+        }
+        var c = _yeni()
+        _yaz("{c} = call i32 @{fonk}(ptr {m}, ptr {degerler[1]})")
+        _yaz("{t} = icmp ne i32 {c}, 0")
+    } else if ad is "split" {
+        if degerler.length > 0 {
+            _yaz("{t} = call ptr @metin_bol(ptr {m}, ptr {degerler[1]}, i64 {e.satir})")
+        } else {
+            _yaz("{t} = call ptr @metin_bol_bosluk(ptr {m})")
+        }
+    } else if ad is "to_bytes" {
+        _ek_bildir("declare ptr @metin_bayta(ptr)")
+        _yaz("{t} = call ptr @metin_bayta(ptr {m})")
+    } else if ad is "trim" {
+        _yaz("{t} = call ptr @metin_kirp(ptr {m})")
+    } else if ad is "is_digit" or ad is "is_letter" or ad is "is_space" {
+        var c = _yeni()
+        var tur = 2
+        if ad is "is_digit" {
+            tur = 0
+        } else if ad is "is_letter" {
+            tur = 1
+        }
+        _yaz("{c} = call i32 @metin_harf_turu(ptr {m}, i32 {tur})")
+        _yaz("{t} = icmp ne i32 {c}, 0")
+    } else if ad is "replace" {
+        _yaz("{t} = call ptr @metin_degistir(ptr {m}, ptr {degerler[1]}, ptr {degerler[2]}, i64 {e.satir})")
+    } else {                                         # upper / lower ("tr" isteğe bağlı)
+        var fonk = "metin_kucuk"
+        if ad is "upper" {
+            fonk = "metin_buyuk"
+        }
+        var dil_kodu = "null"
+        if degerler.length > 0 {
+            dil_kodu = degerler[1]
+        }
+        _yaz("{t} = call ptr @{fonk}(ptr {m}, ptr {dil_kodu}, i64 {e.satir})")
+    }
+    repeat i from 1 to argler.length {
+        _gecici_birak(argler[i], degerler[i])
+    }
+    _gecici_birak(nesne, m)
+    return t
+}
+
+# =====================================================================
+#  KENDİ TİPLER: oluşturma, alan okuma, metot çağırma
+# =====================================================================
+fn _isimli_deger(isimli: [parser.Dugum], ad: text) -> parser.Dugum? {
+    repeat i from 1 to isimli.length {
+        if isimli[i].deger is ad {
+            return isimli[i].cocuklar[1]
+        }
+    }
+    return none
+}
+
+# Ogrenci(ad: "Ali") → nesne_yeni + her alana değerini (ya da varsayılanını) koy
+fn _olusturma(e: parser.Dugum) -> text {
+    var b = tipler.TIPLER[e.deger]
+    var alanlar = ALANLAR[e.deger]
+    var isimli = e.cocuklar[2].cocuklar
+    var o = _yeni()
+    _yaz("{o} = call ptr @nesne_yeni(ptr @\"tur.{e.deger}\")")
+    repeat i from 1 to b.alan_adlari.length {
+        var deger = alanlar[i].cocuklar[2]
+        var verilen = _isimli_deger(isimli, b.alan_adlari[i])
+        if verilen is not none {
+            deger = verilen
+        }
+        var kutu = _listeye_hazirla(deger, b.alan_tipleri[i])
+        var yer = _alan_adresi(o, i - 1)
+        _yaz("store i64 {kutu}, ptr {yer}")
+    }
+    return o
+}
+
+# =====================================================================
+#  ENUM ve MATCH
+# =====================================================================
+fn _enum_olustur(e: parser.Dugum) -> text {
+    var enum_ad = e.cocuklar[1].tip
+    var b = tipler.ENUMLAR[enum_ad]
+    var no = _sira(e.deger, b.cesitler)
+    var alan_adlari = b.alan_adlari[no]
+    var alan_tipleri = b.alan_tipleri[no]
+    var o = _yeni()
+    _yaz("{o} = call ptr @nesne_yeni(ptr @\"tur.{enum_ad}.{e.deger}\")")
+    var isimli: [parser.Dugum] = []
+    if e.tur is "MetotCagrisi" {
+        isimli = e.cocuklar[4].cocuklar
+    }
+    repeat i from 1 to alan_adlari.length {
+        var deger = _isimli_deger(isimli, alan_adlari[i])
+        if deger is not none {
+            var kutu = _listeye_hazirla(deger, alan_tipleri[i])
+            _yaz("store i64 {kutu}, ptr {_alan_adresi(o, i - 1)}")
+        }
+    }
+    return o
+}
+
+fn _gizli_slot_bosalt(slot: text, tip: text) {      # saklanan değeri bırak, yeri boşalt
+    var eski = _yeni()
+    _yaz("{eski} = load ptr, ptr {slot}")
+    _yaz("store ptr null, ptr {slot}")
+    _birak(eski, tip)
+}
+
+fn _match_komutu(k: parser.Dugum) {
+    use change SAYAC
+    var deger_d = k.cocuklar[1]
+    var tip = deger_d.tip
+    var b = tipler.ENUMLAR[tip]
+    var v = _ifade(deger_d)
+    # Değer, durumlar çalışırken yaşasın diye gizli bir yerel değişkende tutulur
+    SAYAC = SAYAC + 1
+    var slot = _yerel_ayir("match.{SAYAC}", tip)
+    _metin_sakla(slot, v, _sahipli_mi(deger_d), tip)
+    var tb = _yeni()
+    var cesit = _yeni()
+    var yer = _yeni()
+    _yaz("{yer} = getelementptr inbounds i8, ptr {v}, i64 8")
+    _yaz("{tb} = load ptr, ptr {yer}")
+    var yer2 = _yeni()
+    _yaz("{yer2} = getelementptr inbounds i8, ptr {tb}, i64 32")
+    _yaz("{cesit} = load i64, ptr {yer2}")
+    var son = _etiket("match_son")
+    var degilse = k.cocuklar[3]
+    var diger = son
+    if degilse.tur is not "Bos" {
+        diger = _etiket("match_else")
+    }
+    var durumlar = k.cocuklar[2].cocuklar
+    var etiketler: [text] = []
+    var secenekler: [text] = []
+    repeat i from 1 to durumlar.length {
+        etiketler.add(_etiket("durum_{durumlar[i].deger}"))
+    }
+    repeat i from 1 to durumlar.length {
+        secenekler.add("i64 {_sira(durumlar[i].deger, b.cesitler) - 1}, label %{etiketler[i]}")
+    }
+    _yaz("switch i64 {cesit}, label %{diger} [ {secenekler.join(" ")} ]")
+    repeat i from 1 to durumlar.length {
+        var d = durumlar[i]
+        _blok_baslat(etiketler[i])
+        var onceki = KAPSAM
+        var baglanan_yerler: [text] = []
+        var baglanan_tipler: [text] = []
+        var adlar: [text] = []
+        if d.ek.length > 0 {
+            adlar = d.ek.split(",")
+        }
+        var alan_tipleri = b.alan_tipleri[_sira(d.deger, b.cesitler)]
+        repeat j from 1 to adlar.length {
+            var atip = alan_tipleri[j]
+            var kutu = _yeni()
+            _yaz("{kutu} = load i64, ptr {_alan_adresi(v, j - 1)}")
+            var deger = _kutudan(kutu, atip)
+            var aslot = _yerel_ayir(adlar[j], atip)
+            if _sayacli(atip) {
+                _metin_sakla(aslot, deger, false, atip)
+                baglanan_yerler.add(aslot)
+                baglanan_tipler.add(atip)
+            } else {
+                _yaz("store {_llvm_tipi(atip)} {deger}, ptr {aslot}")
+            }
+        }
+        _blok(d.cocuklar[1].cocuklar)
+        repeat j from 1 to baglanan_yerler.length {
+            _gizli_slot_bosalt(baglanan_yerler[j], baglanan_tipler[j])
+        }
+        _kapsam_ayarla(onceki)
+        _yaz("br label %{son}")
+    }
+    if degilse.tur is not "Bos" {
+        _blok_baslat(diger)
+        _blok(degilse.cocuklar)
+        _yaz("br label %{son}")
+    }
+    _blok_baslat(son)
+    _gizli_slot_bosalt(slot, tip)
+}
+
+fn _alan_oku(e: parser.Dugum) -> text {              # nesne.alan
+    var nesne = e.cocuklar[1]
+    var b = tipler.TIPLER[nesne.tip]
+    var o = _ifade(nesne)
+    var yer = _alan_adresi(o, _sira(e.deger, b.alan_adlari) - 1)
+    var kutu = _yeni()
+    _yaz("{kutu} = load i64, ptr {yer}")
+    var v = _kutudan(kutu, e.tip)
+    if _sahipli_mi(nesne) {                          # nesne geçiciyse: önce alanı sahiplen, sonra nesneyi bırak
+        if _sayacli(e.tip) {
+            _tut(v, e.tip)
+        }
+        _birak(o, nesne.tip)
+    }
+    return v
+}
+
+fn _arguman_listesi(p_tipler: [text], argler: [parser.Dugum]) -> Argumanlar {
+    var parcalar: [text] = []
+    var dugumler: [parser.Dugum] = []
+    var degerler: [text] = []
+    var n = p_tipler.length
+    if argler.length < n {
+        n = argler.length
+    }
+    repeat i from 1 to n {
+        var v = _donustur(_ifade(argler[i]), argler[i].tip, p_tipler[i])
+        parcalar.add("{_llvm_tipi(p_tipler[i])} {v}")
+        dugumler.add(argler[i])
+        degerler.add(v)
+    }
+    return Argumanlar(parcalar: parcalar, dugumler: dugumler, degerler: degerler)
+}
+
+fn _gecicileri_birak(a: Argumanlar) {
+    repeat i from 1 to a.dugumler.length {
+        _gecici_birak(a.dugumler[i], a.degerler[i])
+    }
+}
+
+fn _metot_cagir(m: tipler.Fonksiyon, nesne: text, argler: [parser.Dugum]) -> text {
+    var a = _arguman_listesi(m.p_tipler, argler)
+    var parcalar = ["ptr {nesne}"]
+    repeat i from 1 to a.parcalar.length {
+        parcalar.add(a.parcalar[i])
+    }
+    var arg = parcalar.join(", ")
+    var t = ""
+    if m.donus is "void" {
+        _yaz("call void @\"m.{m.tip_adi}.{m.ad}\"({arg})")
+    } else {
+        t = _yeni()
+        _yaz("{t} = call {_llvm_tipi(m.donus)} @\"m.{m.tip_adi}.{m.ad}\"({arg})")
+    }
+    _gecicileri_birak(a)
+    return t
+}
+
+fn _nesne_metodu(e: parser.Dugum) -> text {          # nesne.metot(...)
+    var nesne = e.cocuklar[1]
+    var m = tipler.TIPLER[nesne.tip].metotlar[e.deger]
+    var argler = e.cocuklar[2].cocuklar
+    if m.degistirir {
+        # Nesneyi değiştirecek: önce değişkenin kendine ait bir kopyası olduğundan emin ol
+        var p2 = _yazilabilir_d(nesne)
+        var t = _metot_cagir(m, p2, argler)
+        _degisti(_kok_adresi(nesne))
+        return t
+    }
+    var o = _ifade(nesne)
+    var t2 = _metot_cagir(m, o, argler)
+    _gecici_birak(nesne, o)
+    return t2
+}
+
+# =====================================================================
+#  METİNLER
+# =====================================================================
+fn _metin(e: parser.Dugum) -> text {
+    var parcalar = e.cocuklar
+    var sabit = true
+    repeat i from 1 to parcalar.length {
+        if parcalar[i].tur is not "Parca" {
+            sabit = false
+        }
+    }
+    if sabit {                                       # hiç değişken yok: sabit metin
+        return _metin_sabiti(e.deger)
+    }
+    # "Merhaba {ad}!" → parçaları metne çevirip birleştir; aradaki geçici metinler hemen bırakılır
+    var sonuc = ""
+    var sonuc_var = false
+    var sonuc_yeni = false
+    repeat i from 1 to parcalar.length {
+        var parca = parcalar[i]
+        var ifade_mi = parca.tur is not "Parca"
+        if sonuc_var and ifade_mi and parca.tip is "int" {    # hızlı yol: metin + sayı tek seferde
+            var v = _ifade(parca)
+            var t = _yeni()
+            _yaz("{t} = call ptr @metin_birlestir_int(ptr {sonuc}, i64 {v})")
+            if sonuc_yeni {
+                _birak(sonuc, "text")
+            }
+            sonuc = t
+            sonuc_yeni = true
+            skip
+        }
+        var p = Deger(v: "", yeni: false)
+        if not ifade_mi {
+            p = Deger(v: _metin_sabiti(parca.deger), yeni: false)
+        } else {
+            p = _degeri_metne_cevir(parca)
+        }
+        if not sonuc_var {
+            sonuc = p.v
+            sonuc_yeni = p.yeni
+            sonuc_var = true
+            skip
+        }
+        var t2 = _yeni()
+        _yaz("{t2} = call ptr @metin_birlestir(ptr {sonuc}, ptr {p.v})")
+        if p.yeni {
+            _birak(p.v, "text")
+        }
+        if sonuc_yeni {
+            _birak(sonuc, "text")
+        }
+        sonuc = t2
+        sonuc_yeni = true
+    }
+    if not sonuc_yeni {
+        _tut(sonuc, "text")                          # ör: "{ad}" tek başına: yeni sayılsın
+    }
+    return sonuc
+}
+
+fn _degeri_metne_cevir(d: parser.Dugum) -> Deger {  # { } içindeki bir ifadeyi metne çevir
+    var tip = d.tip
+    var v = _ifade(d)
+    if tip is "text" {
+        return Deger(v: v, yeni: _sahipli_mi(d))
+    }
+    var t = _yeni()
+    if tip is "int" {
+        _yaz("{t} = call ptr @metin_int(i64 {v})")
+        return Deger(v: t, yeni: true)
+    }
+    if tip is "float" {
+        _yaz("{t} = call ptr @metin_float(double {v})")
+        return Deger(v: t, yeni: true)
+    }
+    var b = _yeni()
+    _yaz("{b} = zext i1 {v} to i8")
+    _yaz("{t} = call ptr @metin_bool(i8 {b})")
+    return Deger(v: t, yeni: false)
+}
+
+# =====================================================================
+#  HESAPLAR
+# =====================================================================
+fn _sifir_kontrolu(bolen: text, tip: text, satir: int) {
+    var c = _yeni()
+    if tip is "float" {
+        _yaz("{c} = fcmp oeq double {bolen}, 0.0")
+    } else {
+        _yaz("{c} = icmp eq i64 {bolen}, 0")
+    }
+    var hata_blok = _etiket("sifir")
+    var devam_blok = _etiket("devam")
+    _yaz("br i1 {c}, label %{hata_blok}, label %{devam_blok}")
+    _blok_baslat(hata_blok)
+    _yaz("call void @hata_sifira_bolme(i64 {satir})")
+    _yaz("unreachable")
+    _blok_baslat(devam_blok)
+}
+
+# a and b / a or b: sonuç belliyse ikinci tarafa hiç bakma
+fn _kisa_devre(e: parser.Dugum) -> text {
+    var sol = _ifade(e.cocuklar[1])
+    var sol_blok = SIMDIKI_BLOK
+    var sag_e = _etiket("sag")
+    var son = _etiket("mantikson")
+    if e.deger is "and" {
+        _yaz("br i1 {sol}, label %{sag_e}, label %{son}")
+    } else {
+        _yaz("br i1 {sol}, label %{son}, label %{sag_e}")
+    }
+    _blok_baslat(sag_e)
+    var sag = _ifade(e.cocuklar[2])
+    var sag_blok = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+    var t = _yeni()
+    var kisa = "true"
+    if e.deger is "and" {
+        kisa = "false"
+    }
+    _yaz("{t} = phi i1 [ {kisa}, %{sol_blok} ], [ {sag}, %{sag_blok} ]")
+    return t
+}
+
+# metin[i] (tek harf, aralık değil) mi? (hızlandırma kapalıysa hep "hayır": eski derleyiciyle satır satır karşılaştırmak için)
+global var HARF_HIZLANDIRMA = true
+
+fn harf_hizlandirmasini_kapat() {
+    use change HARF_HIZLANDIRMA
+    HARF_HIZLANDIRMA = false
+}
+
+fn _tek_harf_erisimi(d: parser.Dugum) -> bool {
+    return HARF_HIZLANDIRMA and d.tur is "Erisim" and d.cocuklar[1].tip is "text" and d.cocuklar[2].tur is not "Aralik"
+}
+
+# m[i] is x  /  x is m[i]: harfi yeni bir metne çıkarmadan karşılaştır (sıra korunur: önce sol taraf)
+fn _harf_esitligi(sol_d: parser.Dugum, sag_d: parser.Dugum, esit_mi: text, satir: int) -> text {
+    var harf_d = sol_d
+    var diger_d = sag_d
+    var hm = ""
+    var hi = ""
+    var x = ""
+    if _tek_harf_erisimi(sol_d) {
+        hm = _ifade(sol_d.cocuklar[1])
+        hi = _ifade(sol_d.cocuklar[2])
+        x = _ifade(sag_d)
+    } else {
+        harf_d = sag_d
+        diger_d = sol_d
+        x = _ifade(sol_d)
+        hm = _ifade(sag_d.cocuklar[1])
+        hi = _ifade(sag_d.cocuklar[2])
+    }
+    _ek_bildir("declare i32 @metin_harf_esit(ptr, i64, ptr, i64)")
+    var c = _yeni()
+    var t = _yeni()
+    _yaz("{c} = call i32 @metin_harf_esit(ptr {hm}, i64 {hi}, ptr {x}, i64 {satir})")
+    var sart = "eq"
+    if esit_mi is "eq" {
+        sart = "ne"                                  # 1 = eşit
+    }
+    _yaz("{t} = icmp {sart} i32 {c}, 0")
+    _gecici_birak(harf_d.cocuklar[1], hm)
+    _gecici_birak(diger_d, x)
+    return t
+}
+
+# a & b · a | b · a ^ b · a << n · a >> n  (kaydırma 0–63 arası olmalı; >> işareti korur)
+fn _bit_islemi(e: parser.Dugum) -> text {
+    var op = e.deger
+    var a = _ifade(e.cocuklar[1])
+    var b = _ifade(e.cocuklar[2])
+    var t = _yeni()
+    if op is "&" or op is "|" or op is "^" {
+        var komut = "and"
+        if op is "|" {
+            komut = "or"
+        } else if op is "^" {
+            komut = "xor"
+        }
+        _yaz("{t} = {komut} i64 {a}, {b}")
+        return t
+    }
+    _ek_bildir("declare void @hata_kaydirma(i64, i64)")
+    var uygun = _yeni()
+    _yaz("{uygun} = icmp ult i64 {b}, 64")
+    var tamam = _etiket("kaydirma_tamam")
+    var kotu = _etiket("kaydirma_hata")
+    _yaz("br i1 {uygun}, label %{tamam}, label %{kotu}")
+    _blok_baslat(kotu)
+    _yaz("call void @hata_kaydirma(i64 {b}, i64 {e.satir})")
+    _yaz("unreachable")
+    _blok_baslat(tamam)
+    if op is "<<" {
+        _yaz("{t} = shl i64 {a}, {b}")
+    } else {
+        _yaz("{t} = ashr i64 {a}, {b}")
+    }
+    return t
+}
+
+fn _ikili_islem(e: parser.Dugum) -> text {
+    var op = e.deger
+    var sol_d = e.cocuklar[1]
+    var sag_d = e.cocuklar[2]
+    if op is "and" or op is "or" {
+        return _kisa_devre(e)
+    }
+    if op is "&" or op is "|" or op is "^" or op is "<<" or op is ">>" {
+        return _bit_islemi(e)
+    }
+    var esitlik = op is "is" or op is "is not"
+    var esit_mi = "ne"
+    if op is "is" {
+        esit_mi = "eq"
+    }
+    if esitlik and sol_d.tip is "ptr" and sag_d.tip is "ptr" {   # iki tutamaç aynı mı?
+        var a = _ifade(sol_d)
+        var b = _ifade(sag_d)
+        var t = _yeni()
+        _yaz("{t} = icmp {esit_mi} ptr {a}, {b}")
+        return t
+    }
+    if esitlik and (sol_d.tip is "none" or sag_d.tip is "none") {   # x is none
+        var taraf = sol_d
+        if sol_d.tip is "none" {
+            taraf = sag_d
+        }
+        var v = _ifade(taraf)
+        var t = _yeni()
+        _yaz("{t} = icmp {esit_mi} ptr {v}, null")
+        _gecici_birak(taraf, v)
+        return t
+    }
+    if esitlik and sol_d.tip is "text" and sag_d.tip is "text" and (_tek_harf_erisimi(sol_d) or _tek_harf_erisimi(sag_d)) {
+        return _harf_esitligi(sol_d, sag_d, esit_mi, e.satir)
+    }
+    var sol_tip = sol_d.tip
+    var sag_tip = sag_d.tip
+    var sol = _ifade(sol_d)
+    var sag = _ifade(sag_d)
+    var t = _yeni()
+    var ondalik = sol_tip is "float" or sag_tip is "float" or op is "/"
+    var karsilastirma = op is "<" or op is ">" or op is "<=" or op is ">="
+    if op is "+" or op is "-" or op is "*" or op is "/" or karsilastirma or (esitlik and (sol_tip is "int" or sol_tip is "float")) {
+        if ondalik {
+            sol = _donustur(sol, sol_tip, "float")
+            sag = _donustur(sag, sag_tip, "float")
+        }
+    }
+    if op is "+" or op is "-" or op is "*" {
+        var komut = "mul"
+        if op is "+" {
+            komut = "add"
+        } else if op is "-" {
+            komut = "sub"
+        }
+        if ondalik {
+            _yaz("{t} = f{komut} double {sol}, {sag}")
+            return t
+        }
+        return _tam_sayi_islem(komut, sol, sag, e.satir)
+    }
+    if op is "/" {
+        _sifir_kontrolu(sag, "float", e.satir)
+        var t2 = _yeni()
+        _yaz("{t2} = fdiv double {sol}, {sag}")
+        return t2
+    }
+    if op is "//" or op is "%" {
+        # Matematikteki gibi aşağı yuvarlayan bölme: -7 // 2 = -4, -7 % 2 = 1
+        _sifir_kontrolu(sag, "int", e.satir)
+        var bir = _yeni()
+        var iki = _yeni()
+        var ikisi = _yeni()
+        _yaz("{bir} = icmp eq i64 {sag}, -1")
+        _yaz("{iki} = icmp eq i64 {sol}, -9223372036854775808")
+        _yaz("{ikisi} = and i1 {bir}, {iki}")
+        var hata_b = _etiket("tasma")
+        var devam_b = _etiket("tasmadi")
+        _yaz("br i1 {ikisi}, label %{hata_b}, label %{devam_b}")
+        _blok_baslat(hata_b)
+        _yaz("call void @hata_tasma(i64 {e.satir})")
+        _yaz("unreachable")
+        _blok_baslat(devam_b)
+        var bolum = _yeni()
+        var kalan = _yeni()
+        _yaz("{bolum} = sdiv i64 {sol}, {sag}")
+        _yaz("{kalan} = srem i64 {sol}, {sag}")
+        var kalan_var = _yeni()
+        var isaret_x = _yeni()
+        var isaret_farkli = _yeni()
+        var duzelt = _yeni()
+        _yaz("{kalan_var} = icmp ne i64 {kalan}, 0")
+        _yaz("{isaret_x} = xor i64 {kalan}, {sag}")
+        _yaz("{isaret_farkli} = icmp slt i64 {isaret_x}, 0")
+        _yaz("{duzelt} = and i1 {kalan_var}, {isaret_farkli}")
+        var t3 = _yeni()
+        if op is "//" {
+            var d64 = _yeni()
+            _yaz("{d64} = zext i1 {duzelt} to i64")
+            _yaz("{t3} = sub i64 {bolum}, {d64}")
+        } else {
+            var kb = _yeni()
+            _yaz("{kb} = add i64 {kalan}, {sag}")
+            _yaz("{t3} = select i1 {duzelt}, i64 {kb}, i64 {kalan}")
+        }
+        return t3
+    }
+    if karsilastirma or esitlik {
+        if sol_tip is "text" {                       # metinleri karşılaştır (metin_esit: 1 = eşit)
+            var c = _yeni()
+            _yaz("{c} = call i32 @metin_esit(ptr {sol}, ptr {sag})")
+            var sart = "eq"
+            if op is "is" {
+                sart = "ne"
+            }
+            _yaz("{t} = icmp {sart} i32 {c}, 0")
+            _gecici_birak(sol_d, sol)
+            _gecici_birak(sag_d, sag)
+            return t
+        }
+        var sart2 = ""
+        if ondalik {
+            if op is "<" { sart2 = "olt" }
+            if op is ">" { sart2 = "ogt" }
+            if op is "<=" { sart2 = "ole" }
+            if op is ">=" { sart2 = "oge" }
+            if op is "is" { sart2 = "oeq" }
+            if op is "is not" { sart2 = "une" }
+            _yaz("{t} = fcmp {sart2} double {sol}, {sag}")
+        } else {
+            if op is "<" { sart2 = "slt" }
+            if op is ">" { sart2 = "sgt" }
+            if op is "<=" { sart2 = "sle" }
+            if op is ">=" { sart2 = "sge" }
+            if op is "is" { sart2 = "eq" }
+            if op is "is not" { sart2 = "ne" }
+            _yaz("{t} = icmp {sart2} {_llvm_tipi(sol_tip)} {sol}, {sag}")
+        }
+        return t
+    }
+    return t
+}
+
+# =====================================================================
+#  ÇAĞRILAR
+# =====================================================================
+fn _cagri(e: parser.Dugum) -> text {
+    var ad = e.deger
+    var argler = _argumanlar(e)
+    if ad is "print" or ad is "write" {
+        if PROGRAM_PARALEL {
+            _yaz("call void @yaz_kilitle()")          # paralel işlerin satırları karışmasın
+        }
+        repeat i from 1 to argler.length {
+            if i > 1 {
+                _yaz("call void @yaz_bosluk()")
+            }
+            _yazdir(argler[i])
+        }
+        if ad is "print" {
+            _yaz("call void @yaz_satir()")
+        }
+        if PROGRAM_PARALEL {
+            _yaz("call void @yaz_ac()")
+        }
+        return ""
+    }
+    if _icinde(ad, ["input", "random", "time", "int", "float", "text", "read_file", "read_lines", "write_file", "append_file", "file_exists", "code", "char", "args", "read_bytes", "write_bytes", "bytes"]) {
+        return _hazir_fonksiyon(e)
+    }
+    if _kullanici_tipi_mi(ad) {                      # Ogrenci(ad: "Ali")
+        return _olusturma(e)
+    }
+    if TIP_ICINDE.length > 0 and tipler.TIPLER[TIP_ICINDE].metotlar.has(ad) {    # metodun içinden aynı tipin metodu
+        return _metot_cagir(tipler.TIPLER[TIP_ICINDE].metotlar[ad], "%\"self\"", argler)
+    }
+    var f = tipler.FONKSIYONLAR[ad]
+    if f.c_mi {
+        return _c_cagrisi(e, f)
+    }
+    var a = _arguman_listesi(f.p_tipler, argler)
+    var arg_yazisi = a.parcalar.join(", ")
+    var t = ""
+    if f.donus is "void" {
+        _yaz("call void @\"f.{ad}\"({arg_yazisi})")
+    } else {
+        t = _yeni()
+        _yaz("{t} = call {_llvm_tipi(f.donus)} @\"f.{ad}\"({arg_yazisi})")
+    }
+    _gecicileri_birak(a)
+    return t
+}
+
+# =====================================================================
+#  EXTERN: C fonksiyonlarını çağırmak
+# =====================================================================
+fn _c_tipi(t: parser.Dugum, vash_tipi: text) -> text {
+    if t.tur is "TipAdi" and t.deger is "i32" {
+        return "i32"
+    }
+    if t.tur is "TipAdi" and t.deger is "u8" {
+        return "i8"
+    }
+    if t.tur is "TipAdi" and t.deger is "f32" {
+        return "float"
+    }
+    if tipler.C_YAPILARI.has(vash_tipi) {
+        return "yapi:{vash_tipi}"                    # C yapısı, değer olarak
+    }
+    return tipler.EXTERN_TIPLERI[vash_tipi]
+}
+
+# ---------- C yapıları: bellekteki biçim ----------
+#  Alanlar sırayla, her biri kendi boyutunun katı olan bir yere konur (C'nin kuralı); toplam boyut en büyük alanın katına yuvarlanır.
+#  Windows'ta 1, 2, 4 ya da 8 baytlık yapılar bir tam sayı gibi yazmaçta gider/gelir; daha büyükleri adresle.
+type YapiDuzeni {
+    boyut: int
+    ofsetler: [int]
+    c_tipleri: [text]
+}
+
+fn _c_boyut(c: text) -> int {
+    if c is "i64" or c is "double" {
+        return 8
+    }
+    if c is "i32" or c is "float" {
+        return 4
+    }
+    return 1
+}
+
+fn _yapi_duzeni(ad: text) -> YapiDuzeni {
+    var c_tipleri = tipler.C_YAPILARI[ad]
+    var ofsetler: [int] = []
+    var konum = 0
+    var en_buyuk = 1
+    repeat i from 1 to c_tipleri.length {
+        var b = _c_boyut(c_tipleri[i])
+        if konum % b is not 0 {
+            konum = konum + (b - konum % b)
+        }
+        ofsetler.add(konum)
+        konum = konum + b
+        if b > en_buyuk {
+            en_buyuk = b
+        }
+    }
+    if konum % en_buyuk is not 0 {
+        konum = konum + (en_buyuk - konum % en_buyuk)
+    }
+    return YapiDuzeni(boyut: konum, ofsetler: ofsetler, c_tipleri: c_tipleri)
+}
+
+fn _yapi_kucuk_mu(d: YapiDuzeni) -> bool {
+    return d.boyut is 1 or d.boyut is 2 or d.boyut is 4 or d.boyut is 8
+}
+
+# C fonksiyonunun LLVM'deki parametre/dönüş tipi
+fn _c_llvm(c_tip: text) -> text {
+    if c_tip.starts_with("yapi:") {
+        var d = _yapi_duzeni(c_tip[6 to c_tip.length])
+        if _yapi_kucuk_mu(d) {
+            return "i{d.boyut * 8}"
+        }
+        return "ptr"
+    }
+    return c_tip
+}
+
+fn _buyuk_yapi_donus_mu(c_donus: text) -> bool {
+    return c_donus.starts_with("yapi:") and not _yapi_kucuk_mu(_yapi_duzeni(c_donus[6 to c_donus.length]))
+}
+
+fn _yapi_yeri(boyut: int) -> text {
+    use change SAYAC
+    SAYAC = SAYAC + 1
+    var yer = "%\"yapi.{SAYAC}\""
+    _alloca_ekle("  {yer} = alloca [{boyut} x i8], align 8")
+    return yer
+}
+
+# Vash nesnesi → C'nin beklediği biçim. Döndürür: "tip değer" (çağrıya yazılacak hâli)
+fn _yapi_paketle(nesne: text, ad: text) -> text {
+    var d = _yapi_duzeni(ad)
+    var yer = _yapi_yeri(d.boyut)
+    repeat j from 1 to d.c_tipleri.length {
+        var c = d.c_tipleri[j]
+        var kutu = _yeni()
+        _yaz("{kutu} = load i64, ptr {_alan_adresi(nesne, j - 1)}")
+        var hedef = _yeni()
+        _yaz("{hedef} = getelementptr inbounds i8, ptr {yer}, i64 {d.ofsetler[j]}")
+        if c is "i64" {
+            _yaz("store i64 {kutu}, ptr {hedef}")
+        } else if c is "i32" or c is "i8" {
+            var k = _yeni()
+            _yaz("{k} = trunc i64 {kutu} to {c}")
+            _yaz("store {c} {k}, ptr {hedef}")
+        } else {
+            var dbl = _yeni()
+            _yaz("{dbl} = bitcast i64 {kutu} to double")
+            if c is "double" {
+                _yaz("store double {dbl}, ptr {hedef}")
+            } else {
+                var f = _yeni()
+                _yaz("{f} = fptrunc double {dbl} to float")
+                _yaz("store float {f}, ptr {hedef}")
+            }
+        }
+    }
+    if _yapi_kucuk_mu(d) {
+        var v = _yeni()
+        _yaz("{v} = load i{d.boyut * 8}, ptr {yer}")
+        return "i{d.boyut * 8} {v}"
+    }
+    return "ptr {yer}"
+}
+
+# C'nin belleğe yazdığı yapı → yeni bir Vash nesnesi
+fn _yapi_ac(yer: text, ad: text) -> text {
+    var d = _yapi_duzeni(ad)
+    var o = _yeni()
+    _yaz("{o} = call ptr @nesne_yeni(ptr @\"tur.{ad}\")")
+    repeat j from 1 to d.c_tipleri.length {
+        var c = d.c_tipleri[j]
+        var kaynak = _yeni()
+        _yaz("{kaynak} = getelementptr inbounds i8, ptr {yer}, i64 {d.ofsetler[j]}")
+        var v = _yeni()
+        _yaz("{v} = load {c}, ptr {kaynak}")
+        var kutu = v
+        if c is "i32" {
+            kutu = _yeni()
+            _yaz("{kutu} = sext i32 {v} to i64")
+        } else if c is "i8" {
+            kutu = _yeni()
+            _yaz("{kutu} = zext i8 {v} to i64")
+        } else if c is "double" {
+            kutu = _yeni()
+            _yaz("{kutu} = bitcast double {v} to i64")
+        } else if c is "float" {
+            var dbl = _yeni()
+            _yaz("{dbl} = fpext float {v} to double")
+            kutu = _yeni()
+            _yaz("{kutu} = bitcast double {dbl} to i64")
+        }
+        _yaz("store i64 {kutu}, ptr {_alan_adresi(o, j - 1)}")
+    }
+    return o
+}
+
+fn _extern_tanimlari(program: parser.Dugum) {
+    use change HATA
+    use change C_BILGI
+    var calisma_adlari: [text] = []
+    repeat i from 1 to CALISMA_ZAMANI.length {
+        var satir = CALISMA_ZAMANI[i]
+        var parcalar = satir.split("@")
+        if parcalar.length > 1 {
+            var ad = parcalar[2].split("(")[1]
+            if ad.split(".").length is 1 {
+                calisma_adlari.add(ad)
+            }
+        }
+    }
+    var tanitilanlar: {text: text} = {}
+    var kutuphaneler: [text] = []
+    var komutlar = program.cocuklar
+    repeat i from 1 to komutlar.length {
+        var blok = komutlar[i]
+        if blok.tur is not "ExternBlok" {
+            skip
+        }
+        if not _icinde(blok.deger, kutuphaneler) {
+            kutuphaneler.add(blok.deger)
+        }
+        var fler = blok.cocuklar[1].cocuklar
+        repeat j from 1 to fler.length {
+            var f = fler[j]
+            var bilgi = tipler.FONKSIYONLAR[f.deger]
+            var c_ad = f.deger
+            if f.ek.length > 0 {
+                c_ad = f.ek                          # modülden geldiyse C'deki gerçek adı
+            }
+            if c_ad.starts_with("_") {               # '_' sadece "gizli" demek: _DrawCircle → DrawCircle
+                c_ad = c_ad[2 to c_ad.length]
+            }
+            var c_param: [text] = []
+            var ps = f.cocuklar[1].cocuklar
+            repeat p from 1 to ps.length {
+                c_param.add(_c_tipi(ps[p].cocuklar[1], bilgi.p_tipler[p]))
+            }
+            var c_donus = "void"
+            if f.cocuklar[2].tur is not "Bos" {
+                c_donus = _c_tipi(f.cocuklar[2], bilgi.donus)
+            }
+            C_BILGI[f.deger] = CBilgisi(ad: c_ad, parametreler: c_param, donus: c_donus)
+            var llvm_param: [text] = []
+            var llvm_donus = _c_llvm(c_donus)
+            if _buyuk_yapi_donus_mu(c_donus) {
+                llvm_param.add("ptr")                # büyük yapı: C sonucu bizim verdiğimiz yere yazar
+                llvm_donus = "void"
+            }
+            repeat p from 1 to c_param.length {
+                llvm_param.add(_c_llvm(c_param[p]))
+            }
+            if _icinde(c_ad, calisma_adlari) {
+                HATA = dil.sec("Satır {f.satir}: '{c_ad}' adı Vash'ın kendi içinde kullanılıyor; bu C fonksiyonu şimdilik tanıtılamaz.", "Line {f.satir}: The name '{c_ad}' is used inside Vash itself; this C function can't be declared for now.")
+                return
+            }
+            var imza = "declare {llvm_donus} @{c_ad}({llvm_param.join(", ")})"
+            if tanitilanlar.has(c_ad) {
+                if tanitilanlar[c_ad] is not imza {
+                    HATA = dil.sec("Satır {f.satir}: '{c_ad}' C fonksiyonu iki yerde farklı tiplerle tanıtılmış.", "Line {f.satir}: The C function '{c_ad}' is declared in two places with different types.")
+                    return
+                }
+                skip
+            }
+            tanitilanlar[c_ad] = imza
+            _ust_ekle(imza)
+        }
+    }
+    repeat i from 1 to kutuphaneler.length {
+        _ust_ekle("; vash-kutuphane: {kutuphaneler[i]}")
+    }
+}
+
+# Vash değerlerini C'nin beklediği hâle çevir, çağır, sonucu Vash'a geri çevir
+fn _c_cagrisi(e: parser.Dugum, f: tipler.Fonksiyon) -> text {
+    var c = C_BILGI[e.deger]
+    var argler = _argumanlar(e)
+    var parcalar: [text] = []
+    var dugumler: [parser.Dugum] = []
+    var degerler: [text] = []
+    var n = f.p_tipler.length
+    if argler.length < n {
+        n = argler.length
+    }
+    var donus_yeri = ""
+    if _buyuk_yapi_donus_mu(c.donus) {               # büyük yapı dönüyor: yerini biz ayırıp veriyoruz
+        donus_yeri = _yapi_yeri(_yapi_duzeni(c.donus[6 to c.donus.length]).boyut)
+        parcalar.add("ptr {donus_yeri}")
+    }
+    repeat i from 1 to n {
+        var p_tip = f.p_tipler[i]
+        var c_tip = c.parametreler[i]
+        var vash_degeri = _donustur(_ifade(argler[i]), argler[i].tip, p_tip)
+        var v = vash_degeri
+        var yazi = ""
+        if p_tip is "bytes" {                        # bytes → C'ye verinin adresi (C oraya yazabilir)
+            var yer = _yeni()
+            var veri = _yeni()
+            _yaz("{yer} = getelementptr inbounds i8, ptr {v}, i64 32")
+            _yaz("{veri} = load ptr, ptr {yer}")
+            yazi = "ptr {veri}"
+        } else if c_tip is "i32" or c_tip is "i8" {         # Vash int (64 bit) → C'nin küçük tam sayısı
+            var k = _yeni()
+            _yaz("{k} = trunc i64 {v} to {c_tip}")
+            yazi = "{c_tip} {k}"
+        } else if c_tip is "float" {                 # Vash float (64 bit) → C float (32 bit)
+            var k = _yeni()
+            _yaz("{k} = fptrunc double {v} to float")
+            yazi = "float {k}"
+        } else if c_tip.starts_with("yapi:") {       # Vash nesnesi → C yapısı
+            yazi = _yapi_paketle(v, c_tip[6 to c_tip.length])
+        } else if p_tip is "bool" {                  # true/false → 1/0
+            var k = _yeni()
+            _yaz("{k} = zext i1 {v} to i32")
+            yazi = "i32 {k}"
+        } else {
+            yazi = "{c_tip} {v}"
+        }
+        parcalar.add(yazi)
+        dugumler.add(argler[i])
+        degerler.add(vash_degeri)
+    }
+    var llvm_donus = _c_llvm(c.donus)
+    if donus_yeri.length > 0 {
+        llvm_donus = "void"
+    }
+    var cagri = "call {llvm_donus} @{c.ad}({parcalar.join(", ")})"
+    var sonuc = ""
+    if donus_yeri.length > 0 {
+        _yaz(cagri)
+        sonuc = _yapi_ac(donus_yeri, c.donus[6 to c.donus.length])
+    } else if c.donus is "void" {
+        _yaz(cagri)
+    } else {
+        var ham = _yeni()
+        _yaz("{ham} = {cagri}")
+        sonuc = ham
+        if c.donus.starts_with("yapi:") {           # küçük yapı yazmaçta geldi: belleğe koyup aç
+            var yer = _yapi_yeri(_yapi_duzeni(c.donus[6 to c.donus.length]).boyut)
+            _yaz("store {llvm_donus} {ham}, ptr {yer}")
+            sonuc = _yapi_ac(yer, c.donus[6 to c.donus.length])
+        } else if f.donus is "int" and c.donus is "i32" {
+            sonuc = _yeni()
+            _yaz("{sonuc} = sext i32 {ham} to i64")
+        } else if f.donus is "int" and c.donus is "i8" {
+            sonuc = _yeni()
+            _yaz("{sonuc} = zext i8 {ham} to i64")
+        } else if f.donus is "float" and c.donus is "float" {
+            sonuc = _yeni()
+            _yaz("{sonuc} = fpext float {ham} to double")
+        } else if f.donus is "bool" {
+            sonuc = _yeni()
+            _yaz("{sonuc} = icmp ne i32 {ham}, 0")
+        } else if f.donus is "text" {                # C'nin metnini Vash metnine kopyala
+            sonuc = _yeni()
+            _yaz("{sonuc} = call ptr @metin_c_den(ptr {ham})")
+        }
+    }
+    repeat i from 1 to dugumler.length {
+        _gecici_birak(dugumler[i], degerler[i])
+    }
+    return sonuc
+}
+
+# =====================================================================
+#  YAZDIRMA
+# =====================================================================
+fn _yazdir(a: parser.Dugum) {
+    # Değişkenli metni print içinde birleştirmeye gerek yok: parçaları sırayla yaz
+    if a.tur is "Metin" {
+        var degiskenli = false
+        repeat i from 1 to a.cocuklar.length {
+            if a.cocuklar[i].tur is not "Parca" {
+                degiskenli = true
+            }
+        }
+        if degiskenli {
+            repeat i from 1 to a.cocuklar.length {
+                var parca = a.cocuklar[i]
+                if parca.tur is "Parca" {
+                    _yaz("call void @yaz_text(ptr {_metin_sabiti(parca.deger)})")
+                } else {
+                    var v = _ifade(parca)
+                    _deger_yaz(v, parca.tip)
+                    _gecici_birak(parca, v)
+                }
+            }
+            return
+        }
+    }
+    var v2 = _ifade(a)
+    _deger_yaz(v2, a.tip)
+    _gecici_birak(a, v2)
+}
+
+# x else: y → x boş değilse x, boşsa y (sonuç sahiplenilmiş olarak döner)
+fn _yedekli_deger(e: parser.Dugum) -> text {
+    if e.ek is "hata" {
+        return _hatali_yedek(e)
+    }
+    var tip = e.tip
+    var deger_d = e.cocuklar[1]
+    var yedek_d = e.cocuklar[2]
+    var v = _ifade(deger_d)
+    var bos = _yeni()
+    _yaz("{bos} = icmp eq ptr {v}, null")
+    var var_b = _etiket("deger_var")
+    var yok_b = _etiket("deger_yok")
+    var son = _etiket("yedek_son")
+    _yaz("br i1 {bos}, label %{yok_b}, label %{var_b}")
+    _blok_baslat(var_b)
+    if not _sahipli_mi(deger_d) {
+        _tut(v, tip)
+    }
+    var var_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(yok_b)
+    var y = _donustur(_ifade(yedek_d), yedek_d.tip, tip)
+    if not _sahipli_mi(yedek_d) {
+        _tut(y, tip)
+    }
+    var yok_son = SIMDIKI_BLOK
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+    var t = _yeni()
+    _yaz("{t} = phi ptr [ {v}, %{var_son} ], [ {y}, %{yok_son} ]")
+    return t
+}
+
+fn _deger_yaz(v: text, tip: text) {
+    if tip is "none" {
+        _yaz("call void @yaz_text(ptr {_metin_sabiti("none")})")
+        return
+    }
+    if tip.ends_with("?") and tip is not "[?]" and tip is not "\{?\}" {     # yok olabilir: önce bak
+        var bos = _yeni()
+        _yaz("{bos} = icmp eq ptr {v}, null")
+        var yok_b = _etiket("yaz_none")
+        var var_b = _etiket("yaz_deger")
+        var son = _etiket("yaz_son")
+        _yaz("br i1 {bos}, label %{yok_b}, label %{var_b}")
+        _blok_baslat(yok_b)
+        _yaz("call void @yaz_text(ptr {_metin_sabiti("none")})")
+        _yaz("br label %{son}")
+        _blok_baslat(var_b)
+        _deger_yaz(v, tip[1 to tip.length - 1])
+        _yaz("br label %{son}")
+        _blok_baslat(son)
+        return
+    }
+    if tip is "int" {
+        _yaz("call void @yaz_int(i64 {v})")
+    } else if tip is "float" {
+        _yaz("call void @yaz_float(double {v})")
+    } else if tip is "bool" {
+        var b = _yeni()
+        _yaz("{b} = zext i1 {v} to i8")
+        _yaz("call void @yaz_bool(i8 {b})")
+    } else if tip is "text" {
+        _yaz("call void @yaz_text(ptr {v})")
+    } else if _kullanici_tipi_mi(tip) {
+        _yaz("call void @nesne_yaz(ptr {v})")
+    } else if _sozluk_mu(tip) {
+        _yaz("call void @sozluk_yaz(ptr {v})")
+    } else {
+        _yaz("call void @liste_yaz(ptr {v})")
+    }
+}
+
+# =====================================================================
+#  LİSTELER
+# =====================================================================
+fn _liste(e: parser.Dugum) -> text {                 # [a, b, c]
+    var eleman_tipi = _ic(e.tip)
+    var l = _yeni()
+    var kapasite = e.cocuklar.length
+    if kapasite < 4 {
+        kapasite = 4
+    }
+    _yaz("{l} = call ptr @liste_yeni(i64 {_eleman_turu(eleman_tipi)}, i64 {kapasite})")
+    repeat i from 1 to e.cocuklar.length {
+        var kutu = _listeye_hazirla(e.cocuklar[i], eleman_tipi)
+        _yaz("call void @liste_ekle(ptr {l}, i64 {kutu})")
+    }
+    return l
+}
+
+# liste[i] / sozluk[k] / metin[i] / metin[a to b]
+fn _erisim(e: parser.Dugum) -> text {
+    var liste_d = e.cocuklar[1]
+    var sira_d = e.cocuklar[2]
+    if liste_d.tip is "bytes" {
+        return _bayt_erisim(e)
+    }
+    if liste_d.tip is "text" {
+        var m = _ifade(liste_d)
+        var t = _yeni()
+        if sira_d.tur is "Aralik" {
+            var a = _ifade(sira_d.cocuklar[1])
+            var b = _ifade(sira_d.cocuklar[2])
+            _yaz("{t} = call ptr @metin_parca_al(ptr {m}, i64 {a}, i64 {b}, i64 {e.satir})")
+        } else {
+            var i = _ifade(sira_d)
+            _yaz("{t} = call ptr @metin_harf(ptr {m}, i64 {i}, i64 {e.satir})")
+        }
+        _gecici_birak(liste_d, m)
+        return t
+    }
+    var l = _ifade(liste_d)
+    var sira = _ifade(sira_d)
+    var kutu = ""
+    if _sozluk_mu(liste_d.tip) {                     # sozluk["Ali"]: yoksa hata
+        kutu = _yeni()
+        _yaz("{kutu} = call i64 @sozluk_al(ptr {l}, i64 {_kutuya(sira, _anahtar_tipi(liste_d.tip))}, i64 {e.satir})")
+        _gecici_birak(sira_d, sira)
+    } else {
+        kutu = _liste_eleman_oku(l, sira, e.satir, e.tip)
+    }
+    var v = _kutudan(kutu, e.tip)
+    if _sahipli_mi(liste_d) {                        # geçici liste: önce elemanı sahiplen, sonra listeyi bırak
+        if _sayacli(e.tip) {
+            _tut(v, e.tip)
+        }
+        _birak(l, liste_d.tip)
+    }
+    return v
+}
+
+# baytlar[i] → 0–255 arası sayı (yerinde okunur) · baytlar[a to b] → yeni bayt dizisi
+fn _bayt_erisim(e: parser.Dugum) -> text {
+    var liste_d = e.cocuklar[1]
+    var sira_d = e.cocuklar[2]
+    var l = _ifade(liste_d)
+    var t = ""
+    if sira_d.tur is "Aralik" {
+        var a = _ifade(sira_d.cocuklar[1])
+        var b = _ifade(sira_d.cocuklar[2])
+        t = _yeni()
+        _ek_bildir("declare ptr @bayt_parca(ptr, i64, i64, i64)")
+        _yaz("{t} = call ptr @bayt_parca(ptr {l}, i64 {a}, i64 {b}, i64 {e.satir})")
+    } else {
+        var sira = _ifade(sira_d)
+        var n = _liste_uzunlugu(l)
+        var veri = _liste_alani(l, 32, "ptr")
+        var s0 = _sinir_kontrolu(l, sira, n, e.satir)
+        var yer = _yeni()
+        var b8 = _yeni()
+        t = _yeni()
+        _yaz("{yer} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
+        _yaz("{b8} = load i8, ptr {yer}")
+        _yaz("{t} = zext i8 {b8} to i64")
+    }
+    _gecici_birak(liste_d, l)
+    return t
+}
+
+# baytlar.add(x) · add_int(sayi, boyut) · get_int(sira, boyut) · to_text()
+fn _bayt_metodu(e: parser.Dugum) -> text {
+    var nesne = e.cocuklar[1]
+    var argler = e.cocuklar[2].cocuklar
+    var ad = e.deger
+    var degerler: [text] = []
+    repeat i from 1 to argler.length {
+        degerler.add(_ifade(argler[i]))
+    }
+    if ad is "add" or ad is "add_int" {
+        var b = _yazilabilir_d(nesne)
+        if ad is "add" {
+            _ek_bildir("declare void @bayt_ekle(ptr, i64, i64)")
+            _yaz("call void @bayt_ekle(ptr {b}, i64 {degerler[1]}, i64 {e.satir})")
+        } else {
+            _ek_bildir("declare void @bayt_sayi_ekle(ptr, i64, i64, i64)")
+            _yaz("call void @bayt_sayi_ekle(ptr {b}, i64 {degerler[1]}, i64 {degerler[2]}, i64 {e.satir})")
+        }
+        _degisti(_kok_adresi(nesne))
+        return ""
+    }
+    var l = _ifade(nesne)
+    var t = _yeni()
+    if ad is "get_int" {
+        _ek_bildir("declare i64 @bayt_sayi_al(ptr, i64, i64, i64)")
+        _yaz("{t} = call i64 @bayt_sayi_al(ptr {l}, i64 {degerler[1]}, i64 {degerler[2]}, i64 {e.satir})")
+    } else {
+        _ek_bildir("declare ptr @bayt_metne(ptr)")
+        _yaz("{t} = call ptr @bayt_metne(ptr {l})")
+    }
+    _gecici_birak(nesne, l)
+    return t
+}
+
+# Liste başlığı: 0 sayaç, 8 uzunluk, 16 kapasite, 24 tür, 32 veri adresi
+fn _liste_alani(l: text, ofset: int, tip: text) -> text {
+    var yer = _yeni()
+    var v = _yeni()
+    _yaz("{yer} = getelementptr inbounds i8, ptr {l}, i64 {ofset}")
+    _yaz("{v} = load {tip}, ptr {yer}, {TBAA_BASLIK}")
+    return v
+}
+
+fn _liste_uzunlugu(l: text) -> text {
+    use change GOVDE
+    var n = _liste_alani(l, 8, "i64")
+    GOVDE[GOVDE.length] = "{GOVDE[GOVDE.length]}, !range !9005"
+    return n
+}
+
+fn _sinir_kontrolu(l: text, sira: text, n: text, satir: int) -> text {
+    var s0 = _yeni()
+    var uygun = _yeni()
+    _yaz("{s0} = sub i64 {sira}, 1")
+    _yaz("{uygun} = icmp ult i64 {s0}, {n}")
+    var tamam = _etiket("sinirda")
+    var disari = _etiket("sinirdisi")
+    _yaz("br i1 {uygun}, label %{tamam}, label %{disari}")
+    _blok_baslat(disari)
+    _yaz("call void @hata_sinir(ptr {l}, i64 {sira}, i64 {satir})")
+    _yaz("unreachable")
+    _blok_baslat(tamam)
+    return s0
+}
+
+# liste[i] = x
+fn _eleman_ata(k: parser.Dugum) {
+    var liste_d = k.cocuklar[1]
+    if ELEMAN_LISTELERI.length > 0 and liste_d.tur is "Isim" and _icinde(liste_d.deger, ELEMAN_LISTELERI) {
+        _paralel_eleman_ata(k)
+        return
+    }
+    if liste_d.tip is "bytes" {                      # baytlar[i] = x
+        var x = _ifade(k.cocuklar[3])
+        var s = _ifade(k.cocuklar[2])
+        var b = _yazilabilir_d(liste_d)
+        _ek_bildir("declare void @bayt_koy(ptr, i64, i64, i64)")
+        _yaz("call void @bayt_koy(ptr {b}, i64 {s}, i64 {x}, i64 {k.satir})")
+        _degisti(_kok_adresi(liste_d))
+        return
+    }
+    if k.ek is "sozluk" {                            # sozluk["Ali"] = 90
+        var anahtar = _listeye_hazirla(k.cocuklar[2], _anahtar_tipi(liste_d.tip))
+        var deger = _listeye_hazirla(k.cocuklar[3], _deger_tipi(liste_d.tip))
+        var m = _yazilabilir_d(liste_d)
+        _yaz("call void @sozluk_koy(ptr {m}, i64 {anahtar}, i64 {deger})")
+        _degisti(_kok_adresi(liste_d))
+        return
+    }
+    var eleman_tipi = _ic(liste_d.tip)
+    var kutu = _listeye_hazirla(k.cocuklar[3], eleman_tipi)
+    var sira = _ifade(k.cocuklar[2])
+    var a = Adres(adres: _yuva(liste_d), tip: liste_d.tip)
+    if _sayacli(eleman_tipi) {
+        var liste = _yuvayi_yaz(a.adres, liste_d.tip)
+        _yaz("call void @liste_koy(ptr {liste}, i64 {sira}, i64 {kutu}, i64 {k.satir})")
+    } else {
+        var p = _yeni()
+        _yaz("{p} = load ptr, ptr {a.adres}")
+        var sayac = _liste_alani(p, 0, "i64")
+        var tek = _yeni()
+        _yaz("{tek} = icmp eq i64 {sayac}, 1")
+        var hizli = _etiket("tekSahip")
+        var yavas = _etiket("kopyala")
+        var birles = _etiket("yazilabilir")
+        _yaz("br i1 {tek}, label %{hizli}, label %{yavas}")
+        _blok_baslat(yavas)
+        var p2 = _yeni()
+        _yaz("{p2} = call ptr @liste_yazilabilir(ptr {p})")
+        _yaz("store ptr {p2}, ptr {a.adres}")
+        _yaz("br label %{birles}")
+        _blok_baslat(hizli)
+        _yaz("br label %{birles}")
+        _blok_baslat(birles)
+        var liste2 = _yeni()
+        _yaz("{liste2} = phi ptr [ {p}, %{hizli} ], [ {p2}, %{yavas} ]")
+        var n = _liste_uzunlugu(liste2)
+        var veri = _liste_alani(liste2, 32, "ptr")
+        var s0 = _sinir_kontrolu(liste2, sira, n, k.satir)
+        var ey = _yeni()
+        _eleman_sakla(ey, veri, s0, kutu, eleman_tipi)
+    }
+    _degisti(_kok_adresi(liste_d))
+}
+
+# liste[sira] = kutu: [bool] listelerinde her eleman 1 bayt, diğerlerinde 8 bayt
+fn _eleman_sakla(ey: text, veri: text, s0: text, kutu: text, eleman_tipi: text) {
+    if eleman_tipi is "bool" {
+        var b8 = _yeni()
+        _yaz("{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
+        _yaz("{b8} = trunc i64 {kutu} to i8")
+        _yaz("store i8 {b8}, ptr {ey}")
+        return
+    }
+    _yaz("{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")
+    _yaz("store i64 {kutu}, ptr {ey}, {TBAA_ELEMAN}")
+}
+
+# liste[sira] → doğrudan IR (çağrısız: LLVM döngülerde kontrolü çoğu zaman silebilir)
+fn _liste_eleman_oku(l: text, sira: text, satir: int, tip: text) -> text {
+    var n = _liste_uzunlugu(l)
+    var veri = _liste_alani(l, 32, "ptr")            # kontrolden ÖNCE: döngü dışına taşınabilsin
+    var s0 = _sinir_kontrolu(l, sira, n, satir)
+    var ey = _yeni()
+    var kutu = _yeni()
+    if tip is "bool" {                               # [bool]: her eleman 1 bayt
+        var b8 = _yeni()
+        _yaz("{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
+        _yaz("{b8} = load i8, ptr {ey}")
+        _yaz("{kutu} = zext i8 {b8} to i64")
+        return kutu
+    }
+    _yaz("{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")
+    _yaz("{kutu} = load i64, ptr {ey}, {TBAA_ELEMAN}")
+    return kutu
+}
+
+# =====================================================================
+#  SÖZLÜKLER
+# =====================================================================
+fn _sozluk_degeri(e: parser.Dugum) -> text {
+    var anahtar_tipi = _anahtar_tipi(e.tip)
+    var deger_tipi = _deger_tipi(e.tip)
+    var m = _yeni()
+    _yaz("{m} = call ptr @sozluk_yeni(i64 {_eleman_turu(anahtar_tipi)}, i64 {_eleman_turu(deger_tipi)})")
+    var anahtarlar = e.cocuklar[1].cocuklar
+    var degerler = e.cocuklar[2].cocuklar
+    repeat i from 1 to anahtarlar.length {
+        var ak = _listeye_hazirla(anahtarlar[i], anahtar_tipi)
+        var dk = _listeye_hazirla(degerler[i], deger_tipi)
+        _yaz("call void @sozluk_koy(ptr {m}, i64 {ak}, i64 {dk})")
+    }
+    return m
+}
+
+fn _yazilabilir_sozluk(ad: text) -> text {
+    var a = _adres_bul(ad)
+    var p = _yeni()
+    var p2 = _yeni()
+    _yaz("{p} = load ptr, ptr {a.adres}")
+    _yaz("{p2} = call ptr @sozluk_yazilabilir(ptr {p})")
+    _yaz("store ptr {p2}, ptr {a.adres}")
+    return p2
+}
+
+# get(k, else: v) / has(k) / remove(k) / keys() / values()
+fn _sozluk_metodu(e: parser.Dugum) -> text {
+    use change SAYAC
+    var nesne = e.cocuklar[1]
+    var argler = e.cocuklar[2].cocuklar
+    var anahtar_tipi = _anahtar_tipi(nesne.tip)
+    var deger_tipi = _deger_tipi(nesne.tip)
+    if e.deger is "remove" {
+        var k = _ifade(argler[1])
+        var m = _yazilabilir_d(nesne)
+        _yaz("call void @sozluk_sil(ptr {m}, i64 {_kutuya(k, anahtar_tipi)}, i64 {e.satir})")
+        _gecici_birak(argler[1], k)
+        _degisti(_kok_adresi(nesne))
+        return ""
+    }
+    var m2 = _ifade(nesne)
+    var t = _yeni()
+    if e.deger is "keys" or e.deger is "values" {
+        var fonk = "sozluk_degerler"
+        if e.deger is "keys" {
+            fonk = "sozluk_anahtarlar"
+        }
+        _yaz("{t} = call ptr @{fonk}(ptr {m2})")
+    } else if e.deger is "has" {
+        var k = _ifade(argler[1])
+        var c = _yeni()
+        _yaz("{c} = call i32 @sozluk_var_mi(ptr {m2}, i64 {_kutuya(k, anahtar_tipi)})")
+        _yaz("{t} = icmp ne i32 {c}, 0")
+        _gecici_birak(argler[1], k)
+    } else {                                         # get(k, else: yedek)
+        var yedek = e.cocuklar[3]
+        var k = _ifade(argler[1])
+        SAYAC = SAYAC + 1
+        var yer = "%\"sozluk_bul.{SAYAC}\""
+        _alloca_ekle("  {yer} = alloca i64")
+        var c = _yeni()
+        var cb = _yeni()
+        _yaz("{c} = call i32 @sozluk_bul(ptr {m2}, i64 {_kutuya(k, anahtar_tipi)}, ptr {yer})")
+        _gecici_birak(argler[1], k)
+        _yaz("{cb} = icmp ne i32 {c}, 0")
+        var var_b = _etiket("anahtar_var")
+        var yok_b = _etiket("anahtar_yok")
+        var son = _etiket("get_son")
+        _yaz("br i1 {cb}, label %{var_b}, label %{yok_b}")
+        _blok_baslat(var_b)
+        var kutu = _yeni()
+        _yaz("{kutu} = load i64, ptr {yer}")
+        var v1 = _kutudan(kutu, deger_tipi)
+        if _sayacli(deger_tipi) {
+            _tut(v1, deger_tipi)
+        }
+        var var_son = SIMDIKI_BLOK
+        _yaz("br label %{son}")
+        _blok_baslat(yok_b)
+        var v2 = _donustur(_ifade(yedek), yedek.tip, deger_tipi)
+        if _sayacli(deger_tipi) and not _sahipli_mi(yedek) {
+            _tut(v2, deger_tipi)
+        }
+        var yok_son = SIMDIKI_BLOK
+        _yaz("br label %{son}")
+        _blok_baslat(son)
+        _yaz("{t} = phi {_llvm_tipi(deger_tipi)} [ {v1}, %{var_son} ], [ {v2}, %{yok_son} ]")
+    }
+    _gecici_birak(nesne, m2)
+    return t
+}
+
+# liste.add(x) / liste.remove(i) / nesne.metot(...) / metin.split(...) / liste.join(", ")
+fn _metot_cagrisi(e: parser.Dugum) -> text {
+    var nesne = e.cocuklar[1]
+    var argler = e.cocuklar[2].cocuklar
+    if nesne.tip is "text" {
+        return _metin_metodu(e)
+    }
+    if nesne.tip is "bytes" {
+        return _bayt_metodu(e)
+    }
+    if nesne.tip.starts_with("task[") {
+        return _is_metodu(e)
+    }
+    if nesne.tip.starts_with("channel[") {
+        return _kanal_metodu(e)
+    }
+    if e.deger is "join" {
+        var l = _ifade(nesne)
+        var a = _ifade(argler[1])
+        var t = _yeni()
+        _yaz("{t} = call ptr @liste_birlestir(ptr {l}, ptr {a})")
+        _gecici_birak(argler[1], a)
+        _gecici_birak(nesne, l)
+        return t
+    }
+    if tipler.TIPLER.has(nesne.tip) {
+        return _nesne_metodu(e)
+    }
+    if e.ek is "lambda" {                            # map / filter / any / all / count / find
+        return _liste_lambda_uret(e)
+    }
+    if _sozluk_mu(nesne.tip) {
+        return _sozluk_metodu(e)
+    }
+    var eleman_tipi = _ic(nesne.tip)
+    if e.deger is "sort" {
+        var liste3 = _yazilabilir_d(nesne)
+        var isimli = e.cocuklar[4].cocuklar
+        if isimli.length is 0 {
+            _ek_bildir("declare void @liste_sirala_dogal(ptr)")
+            _yaz("call void @liste_sirala_dogal(ptr {liste3})")
+        } else if e.ek is "kapanis" {                # sort(by: fn(a, b) => ...)
+            _ek_bildir("declare void @liste_sirala_k(ptr, ptr, ptr)")
+            var fd = isimli[1].cocuklar[1]
+            var kk = _ifade(fd)
+            var ksarici = _kapanis_siralama_sarici(eleman_tipi)
+            _yaz("call void @liste_sirala_k(ptr {liste3}, ptr {ksarici}, ptr {kk})")
+            _gecici_birak(fd, kk)
+        } else {
+            _ek_bildir("declare void @liste_sirala(ptr, ptr)")
+            var sarici = _siralama_sarici(isimli[1].cocuklar[1].deger, eleman_tipi)
+            _yaz("call void @liste_sirala(ptr {liste3}, ptr {sarici})")
+        }
+        _degisti(_kok_adresi(nesne))
+        return ""
+    }
+    if e.deger is "add" {
+        var kutu = _listeye_hazirla(argler[1], eleman_tipi)
+        var liste = _yazilabilir_d(nesne)
+        _yaz("call void @liste_ekle(ptr {liste}, i64 {kutu})")
+    } else {
+        var sira = _ifade(argler[1])
+        var liste2 = _yazilabilir_d(nesne)
+        _yaz("call void @liste_sil(ptr {liste2}, i64 {sira}, i64 {e.satir})")
+    }
+    _degisti(_kok_adresi(nesne))
+    return ""
+}
+
+# =====================================================================
+#  WHEN
+# =====================================================================
+fn _degisti(adres: text) {                           # bir değişken değişti: onu izleyen when'leri kontrol et
+    if IZLEYICILER.has(adres) {
+        var nler = IZLEYICILER[adres]
+        repeat i from 1 to nler.length {
+            _yaz("call void @\"when.{nler[i]}\"()")
+        }
+    }
+    var n = YEREL_WHENLER.length
+    repeat i from 1 to n {
+        if _icinde(adres, YEREL_WHENLER[i].adresler) {
+            _yerel_when_kontrol(i)
+        }
+    }
+}
+
+fn _when_komutu(k: parser.Dugum) {
+    use change SAYAC
+    use change YEREL_WHENLER
+    var bekle = k.ek is "later"
+    if KURESEL_WHENLER.has(_yer(k)) and ANA_PROGRAM and BLOK_DERINLIGI is 0 {
+        var n = KURESEL_WHENLER[_yer(k)]
+        if bekle {                                   # when later: şu anki durumu "önceki" say
+            var c = _ifade(k.cocuklar[1])
+            _yaz("store i1 {c}, ptr @\"when.{n}.onceki\"")
+        }
+        _yaz("store i1 true, ptr @\"when.{n}.aktif\"")
+        if not bekle {
+            _yaz("call void @\"when.{n}\"()")
+        }
+        return
+    }
+    # Blok içi when: izlediği değişkenlerin adresleri ve kendi "önceki" bilgisi
+    SAYAC = SAYAC + 1
+    var onceki = _yerel_ayir("when_onceki{SAYAC}", "bool")
+    var bos: [text] = []
+    var izlenenler = _sirala(_adlari_topla(k.cocuklar[1], bos))
+    var adresler: [text] = []
+    repeat i from 1 to izlenenler.length {
+        var a = _adres_bul(izlenenler[i]).adres
+        if not _icinde(a, adresler) {
+            adresler.add(a)
+        }
+    }
+    if bekle {
+        var c = _ifade(k.cocuklar[1])
+        _yaz("store i1 {c}, ptr {onceki}")
+    } else {
+        _yaz("store i1 false, ptr {onceki}")
+    }
+    YEREL_WHENLER.add(YerelWhen(kosul: k.cocuklar[1], govde: k.cocuklar[2].cocuklar, onceki: onceki, uretiliyor: false, adresler: adresler))
+    if not bekle {
+        _yerel_when_kontrol(YEREL_WHENLER.length)
+    }
+}
+
+fn _yerel_when_kontrol(no: int) {                    # blok içi when'in kontrolü değişikliğin yapıldığı yere
+    use change YEREL_WHENLER
+    var w = YEREL_WHENLER[no]
+    if w.uretiliyor {
+        return                                       # kendi bloğunun içindeyiz: tekrar tetikleme
+    }
+    var c = _yeni()
+    var o = _yeni()
+    var ters = _yeni()
+    var tetik = _yeni()
+    c = _ifade(w.kosul)
+    _yaz("{o} = load i1, ptr {w.onceki}")
+    _yaz("{ters} = xor i1 {o}, true")
+    _yaz("{tetik} = and i1 {c}, {ters}")
+    _yaz("store i1 {c}, ptr {w.onceki}")
+    var govde = _etiket("when_oldu")
+    var devam = _etiket("when_devam")
+    _yaz("br i1 {tetik}, label %{govde}, label %{devam}")
+    _blok_baslat(govde)
+    w.uretiliyor = true
+    YEREL_WHENLER[no] = w
+    _blok(w.govde)
+    var w2 = YEREL_WHENLER[no]
+    w2.uretiliyor = false
+    YEREL_WHENLER[no] = w2
+    var c2 = _ifade(w.kosul)                         # blok değişkeni değiştirmiş olabilir: durumu güncelle
+    _yaz("store i1 {c2}, ptr {w.onceki}")
+    _yaz("br label %{devam}")
+    _blok_baslat(devam)
+}
+
+# Ana programdaki when → gizli bir fonksiyon (izlenen değişken nerede değişirse değişsin çağrılır)
+fn _kuresel_when_fonksiyonu(k: parser.Dugum) -> text {
+    var n = KURESEL_WHENLER[_yer(k)]
+    _fonksiyon_baslat("void", false)
+    var g = "@\"when.{n}"
+    var a = _yeni()
+    var r = _yeni()
+    var o = _yeni()
+    var ters = _yeni()
+    var tetik = _yeni()
+    var son = _etiket("son")
+    var d1 = _etiket("aktif")
+    var d2 = _etiket("bos")
+    var govde = _etiket("oldu")
+    _yaz("{a} = load i1, ptr {g}.aktif\"")
+    _yaz("br i1 {a}, label %{d1}, label %{son}")
+    _blok_baslat(d1)
+    _yaz("{r} = load i1, ptr {g}.calisiyor\"")
+    _yaz("br i1 {r}, label %{son}, label %{d2}")
+    _blok_baslat(d2)
+    var c = _ifade(k.cocuklar[1])
+    _yaz("{o} = load i1, ptr {g}.onceki\"")
+    _yaz("{ters} = xor i1 {o}, true")
+    _yaz("{tetik} = and i1 {c}, {ters}")
+    _yaz("store i1 {c}, ptr {g}.onceki\"")
+    _yaz("br i1 {tetik}, label %{govde}, label %{son}")
+    _blok_baslat(govde)
+    _yaz("store i1 true, ptr {g}.calisiyor\"")
+    _blok(k.cocuklar[2].cocuklar)
+    _yaz("store i1 false, ptr {g}.calisiyor\"")
+    var c2 = _ifade(k.cocuklar[1])
+    _yaz("store i1 {c2}, ptr {g}.onceki\"")
+    _yaz("br label %{son}")
+    _blok_baslat(son)
+    _yerelleri_birak()
+    _yaz("ret void")
+    return _fonksiyon_bitir("define internal void @\"when.{n}\"() \{")
+}
+
+# =====================================================================
+#  PENCERE (window)
+# =====================================================================
+#  Her olaydan sonra bütün yazılar yeniden hesaplanır; pencereye sadece değişenler gider.
+fn _oge_hedef(o: parser.Dugum) -> text {
+    return o.ek.split(",")[1]
+}
+
+fn _oge_eleman(o: parser.Dugum) -> text {
+    return o.ek.split(",")[2]
+}
+
+fn _oge_sira_adi(o: parser.Dugum) -> text {
+    return o.ek.split(",")[3]
+}
+
+fn _oge_no(o: parser.Dugum) -> int {
+    return PENCERE_NO[_yer(o)]
+}
+
+# Her parçanın numarası: tarayıcıyla bu numarayla konuşulur (sırayla, iç içe olanlar da)
+fn _numarala(ogeler: [parser.Dugum]) {
+    use change PENCERE_NO
+    use change PENCERE_SAYAC
+    repeat i from 1 to ogeler.length {
+        var o = ogeler[i]
+        PENCERE_NO[_yer(o)] = PENCERE_SAYAC
+        PENCERE_SAYAC = PENCERE_SAYAC + 1
+        if o.deger is "row" or o.deger is "list" {
+            _numarala(o.cocuklar[3].cocuklar)
+        }
+    }
+}
+
+# row'ları aç: içindeki parçaları sırayla ver (list'in şablonuna girmeden)
+fn _duzlestir(ogeler: [parser.Dugum]) -> [parser.Dugum] {
+    var sonuc: [parser.Dugum] = []
+    repeat i from 1 to ogeler.length {
+        if ogeler[i].deger is "row" {
+            var ic = _duzlestir(ogeler[i].cocuklar[3].cocuklar)
+            repeat j from 1 to ic.length {
+                sonuc.add(ic[j])
+            }
+        } else {
+            sonuc.add(ogeler[i])
+        }
+    }
+    return sonuc
+}
+
+# Pencerenin tarifi (JSON): hangi parça, hangi numara, içinde neler var
+fn _tanim(ogeler: [parser.Dugum]) -> text {
+    var parcalar: [text] = []
+    repeat i from 1 to ogeler.length {
+        var o = ogeler[i]
+        var s = "\{\"t\": \"{o.deger}\", \"no\": {_oge_no(o)}"
+        if o.deger is "row" or o.deger is "list" {
+            s = "{s}, \"c\": {_tanim(o.cocuklar[3].cocuklar)}"
+        }
+        if o.deger is "list" {
+            var secim = "false"
+            if _oge_hedef(o).length > 0 {
+                secim = "true"
+            }
+            s = "{s}, \"secim\": {secim}"
+        }
+        if o.deger is "textbox" {
+            s = "{s}, \"tip\": \"{tipler.ANA[_oge_hedef(o)].tip}\""
+        }
+        parcalar.add("{s}\}")
+    }
+    return "[{parcalar.join(", ")}]"
+}
+
+fn _html_kacir(s: text) -> text {
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#x27;")
+}
+
+fn _pencere(k: parser.Dugum) {
+    _numarala(k.cocuklar[2].cocuklar)
+    var sablon = SABLON
+    var tanim_json = _tanim(k.cocuklar[2].cocuklar).replace("</", "<\\/")
+    var sayfa = sablon.replace("__BASLIK__", _html_kacir(k.cocuklar[1].deger)).replace("__TANIM__", tanim_json)
+    _yaz("call void @ui_baslat(ptr {_metin_sabiti(sayfa)})")
+
+    var ogeler = _duzlestir(k.cocuklar[2].cocuklar)
+    var yenile = _etiket("pencere_yenile")
+    var cikis = _etiket("pencere_bitti")
+    var diger = _etiket("pencere_diger")
+    _yaz("br label %{yenile}")
+    _blok_baslat(yenile)
+
+    # 1) Ekrandaki her yazıyı ve bağlı her değeri hesapla
+    repeat i from 1 to ogeler.length {
+        var o = ogeler[i]
+        if o.deger is "list" {
+            _liste_yenile(o)
+            skip
+        }
+        var d = _degeri_metne_cevir(o.cocuklar[1])
+        _yaz("call void @ui_metin(i64 {_oge_no(o)}, ptr {d.v})")
+        if d.yeni {
+            _birak(d.v, "text")
+        }
+        var hedef = _oge_hedef(o)
+        if hedef.length > 0 {
+            var a = _adres_bul(hedef)
+            var v = _yeni()
+            _yaz("{v} = load {_llvm_tipi(a.tip)}, ptr {a.adres}")
+            var dm = _deger_metni(v, a.tip)
+            _yaz("call void @ui_deger(i64 {_oge_no(o)}, ptr {dm.v})")
+            if dm.yeni {
+                _birak(dm.v, "text")
+            }
+        }
+    }
+
+    # 2) Bir olay bekle ve hangi parçadan geldiğine göre dallan
+    var olay = _yeni()
+    _yaz("{olay} = call i64 @ui_bekle()")
+    var dal_ogeleri: [parser.Dugum] = []
+    var dal_listeleri: [parser.Dugum] = []
+    var dal_satir_mi: [bool] = []
+    var dal_etiketleri: [text] = []
+    repeat i from 1 to ogeler.length {
+        var o = ogeler[i]
+        if o.deger is "list" {
+            if _oge_hedef(o).length > 0 {            # satıra tıklandı: seçim
+                dal_ogeleri.add(o)
+                dal_listeleri.add(o)
+                dal_satir_mi.add(false)
+                dal_etiketleri.add(_etiket("olay_secim"))
+            }
+            var sablon_ogeleri = _duzlestir(o.cocuklar[3].cocuklar)
+            repeat j from 1 to sablon_ogeleri.length {    # satırdaki bir düğmeye basıldı
+                if sablon_ogeleri[j].deger is "button" {
+                    dal_ogeleri.add(sablon_ogeleri[j])
+                    dal_listeleri.add(o)
+                    dal_satir_mi.add(true)
+                    dal_etiketleri.add(_etiket("olay_satir_button"))
+                }
+            }
+        } else if o.deger is not "label" {
+            dal_ogeleri.add(o)
+            dal_listeleri.add(o)
+            dal_satir_mi.add(false)
+            dal_etiketleri.add(_etiket("olay_{o.deger}"))
+        }
+    }
+    var secenekler: [text] = []
+    repeat i from 1 to dal_ogeleri.length {
+        secenekler.add("i64 {_oge_no(dal_ogeleri[i])}, label %{dal_etiketleri[i]}")
+    }
+    _yaz("switch i64 {olay}, label %{diger} [ {secenekler.join(" ")} ]")
+
+    repeat i from 1 to dal_ogeleri.length {
+        var o = dal_ogeleri[i]
+        _blok_baslat(dal_etiketleri[i])
+        if dal_satir_mi[i] {
+            _satir_olayi(dal_listeleri[i], o)
+        } else if o.deger is "button" {
+            _blok(o.cocuklar[2].cocuklar)
+        } else {
+            _bagli_deger_al(o)                       # textbox, checkbox, list seçimi
+        }
+        _yaz("br label %{yenile}")
+    }
+
+    _blok_baslat(diger)                              # -1: pencere kapandı
+    var kapandi = _yeni()
+    _yaz("{kapandi} = icmp slt i64 {olay}, 0")
+    _yaz("br i1 {kapandi}, label %{cikis}, label %{yenile}")
+    _blok_baslat(cikis)
+    _yaz("call void @ui_bitir()")
+}
+
+# ---------- list: her satır için şablon ----------
+fn _liste_al_ve_tut(o: parser.Dugum) -> text {
+    var kaynak = o.cocuklar[4]
+    var l = _ifade(kaynak)
+    if not _sahipli_mi(kaynak) {
+        _tut(l, kaynak.tip)                          # bu iş bitene kadar liste bizde kalsın
+    }
+    return l
+}
+
+# r. satırın elemanını ve sıra numarasını şablonun değişkenlerine koy
+fn _satir_baglan(o: parser.Dugum, l: text, r: text) -> text {
+    use change SAYAC
+    var tip = _ic(o.cocuklar[4].tip)
+    var v = _kutudan(_liste_eleman_oku(l, r, o.satir, tip), tip)
+    if _sayacli(tip) {
+        _tut(v, tip)
+    }
+    SAYAC = SAYAC + 1
+    var eleman = _oge_eleman(o)
+    var adres = "%\"satir.{eleman}.{SAYAC}\""
+    _alloca_ekle("  {adres} = alloca {_llvm_tipi(tip)}")
+    _yaz("store {_llvm_tipi(tip)} {v}, ptr {adres}")
+    _kapsam_koy(eleman, Adres(adres: adres, tip: tip))
+    var sira_adi = _oge_sira_adi(o)
+    if sira_adi.length > 0 {
+        SAYAC = SAYAC + 1
+        var s_adres = "%\"satir.{sira_adi}.{SAYAC}\""
+        _alloca_ekle("  {s_adres} = alloca i64")
+        _yaz("store i64 {r}, ptr {s_adres}")
+        _kapsam_koy(sira_adi, Adres(adres: s_adres, tip: "int"))
+    }
+    return v
+}
+
+fn _satir_birak(o: parser.Dugum, v: text) {
+    var tip = _ic(o.cocuklar[4].tip)
+    if _sayacli(tip) {
+        _birak(v, tip)
+    }
+}
+
+fn _liste_yenile(o: parser.Dugum) {
+    use change SAYAC
+    var sablon = _duzlestir(o.cocuklar[3].cocuklar)
+    var l = _liste_al_ve_tut(o)
+    var n = _liste_uzunlugu(l)
+    _yaz("call void @ui_liste_boy(i64 {_oge_no(o)}, i64 {n})")
+    var hedef = _oge_hedef(o)
+    if hedef.length > 0 {
+        var a = _adres_bul(hedef)
+        var v = _yeni()
+        _yaz("{v} = load i64, ptr {a.adres}")
+        var dm = _deger_metni(v, "int")
+        _yaz("call void @ui_deger(i64 {_oge_no(o)}, ptr {dm.v})")
+        _birak(dm.v, "text")
+    }
+    SAYAC = SAYAC + 1
+    var r_yer = "%\"satir_no.{SAYAC}\""
+    _alloca_ekle("  {r_yer} = alloca i64")
+    _yaz("store i64 1, ptr {r_yer}")
+    var kontrol = _etiket("satir_kontrol")
+    var govde = _etiket("satir")
+    var son = _etiket("satir_son")
+    _yaz("br label %{kontrol}")
+    _blok_baslat(kontrol)
+    var r = _yeni()
+    var c = _yeni()
+    _yaz("{r} = load i64, ptr {r_yer}")
+    _yaz("{c} = icmp sle i64 {r}, {n}")
+    _yaz("br i1 {c}, label %{govde}, label %{son}")
+    _blok_baslat(govde)
+    var onceki = KAPSAM
+    var v2 = _satir_baglan(o, l, r)
+    repeat i from 1 to sablon.length {
+        var b = sablon[i]
+        var d = _degeri_metne_cevir(b.cocuklar[1])
+        _yaz("call void @ui_metin_satir(i64 {_oge_no(b)}, i64 {r}, ptr {d.v})")
+        if d.yeni {
+            _birak(d.v, "text")
+        }
+    }
+    _satir_birak(o, v2)
+    _kapsam_ayarla(onceki)
+    var r2 = _yeni()
+    _yaz("{r2} = add nsw i64 {r}, 1")
+    _yaz("store i64 {r2}, ptr {r_yer}")
+    _yaz("br label %{kontrol}")
+    _blok_baslat(son)
+    repeat i from 1 to sablon.length {
+        _yaz("call void @ui_satir_kirp(i64 {_oge_no(sablon[i])}, i64 {n})")
+    }
+    _birak(l, o.cocuklar[4].tip)
+}
+
+# Bir satırdaki düğmeye basıldı: o satırın elemanıyla düğmenin bloğunu çalıştır
+fn _satir_olayi(o: parser.Dugum, b: parser.Dugum) {
+    var r = _yeni()
+    _yaz("{r} = call i64 @ui_olay_satiri()")
+    var l = _liste_al_ve_tut(o)
+    var n = _liste_uzunlugu(l)
+    var s0 = _yeni()
+    var var_mi = _yeni()
+    _yaz("{s0} = sub i64 {r}, 1")
+    _yaz("{var_mi} = icmp ult i64 {s0}, {n}")
+    var calis = _etiket("satir_calis")
+    var bitti = _etiket("satir_bitti")
+    _yaz("br i1 {var_mi}, label %{calis}, label %{bitti}")
+    _blok_baslat(calis)
+    var onceki = KAPSAM
+    var v = _satir_baglan(o, l, r)
+    _blok(b.cocuklar[2].cocuklar)
+    _satir_birak(o, v)
+    _kapsam_ayarla(onceki)
+    _yaz("br label %{bitti}")
+    _blok_baslat(bitti)
+    _birak(l, o.cocuklar[4].tip)
+}
+
+fn _deger_metni(v: text, tip: text) -> Deger {       # bir değeri metne çevir
+    if tip is "text" {
+        return Deger(v: v, yeni: false)
+    }
+    var t = _yeni()
+    if tip is "int" {
+        _yaz("{t} = call ptr @metin_int(i64 {v})")
+        return Deger(v: t, yeni: true)
+    }
+    if tip is "float" {
+        _yaz("{t} = call ptr @metin_float(double {v})")
+        return Deger(v: t, yeni: true)
+    }
+    var b = _yeni()
+    _yaz("{b} = zext i1 {v} to i8")
+    _yaz("{t} = call ptr @metin_bool(i8 {b})")
+    return Deger(v: t, yeni: false)
+}
+
+# textbox/checkbox'tan gelen yazıyı bağlı değişkenin tipine çevirip içine koy
+fn _bagli_deger_al(o: parser.Dugum) {
+    use change SAYAC
+    var a = _adres_bul(_oge_hedef(o))
+    var s = _yeni()
+    _yaz("{s} = call ptr @ui_olay_degeri()")
+    if a.tip is "text" {
+        _metin_sakla(a.adres, s, true, "text")
+        _degisti(a.adres)
+        return
+    }
+    if a.tip is "bool" {
+        var c = _yeni()
+        var b = _yeni()
+        _yaz("{c} = call i32 @metin_esit(ptr {s}, ptr {_metin_sabiti("true")})")
+        _birak(s, "text")
+        _yaz("{b} = icmp ne i32 {c}, 0")
+        _yaz("store i1 {b}, ptr {a.adres}")
+        _degisti(a.adres)
+        return
+    }
+    var lt = _llvm_tipi(a.tip)
+    SAYAC = SAYAC + 1
+    var yer = "%\"kutu.{SAYAC}\""
+    _alloca_ekle("  {yer} = alloca {lt}")
+    var ok = _yeni()
+    var okb = _yeni()
+    var fonk = "metin_float_dene"
+    if a.tip is "int" {
+        fonk = "metin_int_dene"
+    }
+    _yaz("{ok} = call i32 @{fonk}(ptr {s}, ptr {yer})")
+    _birak(s, "text")
+    _yaz("{okb} = icmp ne i32 {ok}, 0")
+    var oldu = _etiket("kutu_sayi")
+    var olmadi = _etiket("kutu_sayi_degil")
+    _yaz("br i1 {okb}, label %{oldu}, label %{olmadi}")
+    _blok_baslat(oldu)
+    var v = _yeni()
+    _yaz("{v} = load {lt}, ptr {yer}")
+    _yaz("store {lt} {v}, ptr {a.adres}")
+    _degisti(a.adres)
+    _yaz("br label %{olmadi}")
+    _blok_baslat(olmadi)
+}

@@ -1,0 +1,2 @@
+print(write_file("veri/not.txt:gizli", "ek akış"))
+print("BU SATIR YAZILMAMALI")

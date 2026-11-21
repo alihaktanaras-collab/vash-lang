@@ -1,0 +1,35 @@
+# Vash ile yazılmış ağaç kurucuyu dener: dosya adını girdiden okur, ağacı satır satır yazar.
+#     <girinti>TÜR|DEĞER|EK|SATIR:SÜTUN
+
+import lexer
+import parser
+
+global var CIKTI: [text] = []
+
+fn yaz(d: parser.Dugum, girinti: text) {
+    use change CIKTI
+    var deger = d.deger.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+    CIKTI.add("{girinti}{d.tur}|{deger}|{d.ek}|{d.satir}:{d.sutun}")
+    repeat i from 1 to d.cocuklar.length {
+        yaz(d.cocuklar[i], "{girinti}  ")
+    }
+}
+
+var yol = input().trim()
+var kod = read_file(yol)
+if kod is none {
+    print("HATA: '{yol}' okunamadı.")
+} else {
+    match lexer.kelimelere_ayir(kod) {
+        Hata(mesaj) { print("HATA: {mesaj}") }
+        Tamam(tokenlar) {
+            match parser.agac_kur(tokenlar) {
+                Hata(mesaj) { print("HATA: {mesaj}") }
+                Tamam(agac) {
+                    yaz(agac, "")
+                    print(CIKTI.join("\n"))
+                }
+            }
+        }
+    }
+}

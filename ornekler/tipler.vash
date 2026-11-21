@@ -1,0 +1,29 @@
+# Tipler, bölme ve kapsam örnekleri
+
+global var PI = 3.14159        # her fonksiyondan okunabilir
+var vergi = 18
+var sayac = 0
+
+var ad: text = "Ali"
+var bitti = false
+var yarim = 7 / 2              # 3.5  → float
+var tam = 7 // 2               # 3    → int
+var notlar = [90, 75, 100]     # [int]
+
+fn alan(r: float) -> float {
+    return PI * r * r          # global: use gerekmez
+}
+
+fn fiyat(x: int) -> int {
+    use vergi                  # dışarıdan çağır (sadece okur)
+    return x + x * vergi // 100
+}
+
+fn artir() {
+    use change sayac           # dışarıdan çağır (değiştirebilir)
+    sayac = sayac + 1
+}
+
+artir()
+print("Merhaba {ad}, alan:", alan(2), "fiyat:", fiyat(100))
+print(yarim, tam, bitti, sayac is 1)

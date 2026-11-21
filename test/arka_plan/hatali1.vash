@@ -1,0 +1,7 @@
+var sayac = 0
+fn artir() -> int {
+    use change sayac
+    sayac = sayac + 1
+    return sayac
+}
+var x = start artir()

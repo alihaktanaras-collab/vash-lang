@@ -1,0 +1,26 @@
+# graphics modülünün sınaması: 90 kare çizer, 60. karede ekran görüntüsü alır, kendiliğinden kapanır.
+# Renk (4 bayt, yazmaçta), Konum (8 bayt, yazmaçta) ve Kutu (16 bayt, adresle) yollarının hepsi kullanılıyor.
+
+import graphics
+
+graphics.open_window(640, 360, "Vash grafik denemesi")
+var x = 60.0
+repeat kare from 1 to 90 {
+    if not graphics.is_open() {
+        stop
+    }
+    x = x + 4.0
+    graphics.begin_drawing(graphics.DARK_BLUE)
+    graphics.draw_rectangle(40.0, 220.0, 560.0, 40.0, graphics.GREEN)
+    graphics.draw_circle(x, 180.0, 36.0, graphics.YELLOW)
+    graphics.draw_circle(320.0, 90.0, 20.0, graphics.Color(r: 255, g: 0, b: 120, a: 200))
+    graphics.draw_text("Vash + Raylib  kare {kare}", 20, 20, 24, graphics.WHITE)
+    graphics.end_drawing()
+    if kare is 60 {
+        graphics.screenshot("grafik_dene.png")
+    }
+}
+var f = graphics.mouse_position()
+print("kare süresi:", graphics.frame_time() > 0.0, " fare:", f.x >= 0.0 or f.x < 0.0)
+graphics.close_window()
+print("bitti")

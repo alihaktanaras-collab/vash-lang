@@ -1,0 +1,13 @@
+import http
+var s = http.listen_secure(8444, "deneme.pfx", "gizli123") else: http.Server(id: 0, port: 0)
+if s.id is 0 {
+    print("açılamadı:", http.error())
+} else {
+    var yanlis = http.listen_secure(8445, "deneme.pfx", "yanlis-parola")
+    if yanlis is none {
+        print("yanlış parola:", http.error())
+    }
+    var istek = s.next()
+    istek.reply(200, "pfx ile merhaba")
+    print("cevaplandı")
+}

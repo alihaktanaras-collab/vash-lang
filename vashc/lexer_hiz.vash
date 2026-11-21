@@ -1,0 +1,13 @@
+# Kelimelere ayırıcının hızını ölçer: dosya adını girdiden okur, sadece ayırma süresini yazar.
+import lexer
+
+var yol = input().trim()
+var kod = read_file(yol) else: ""
+var adet = 0
+var sure = measure {
+    match lexer.kelimelere_ayir(kod) {
+        Tamam(tokenlar) { adet = tokenlar.length }
+        Hata(mesaj) { print("HATA: {mesaj}") }
+    }
+}
+print("Vash:   {adet} token, {int(sure * 1000)} ms")

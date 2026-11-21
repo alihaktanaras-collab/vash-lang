@@ -1,0 +1,98 @@
+# =====================================================================
+#  ALIŞVERİŞ SEPETİ — Vash ile görsel arayüz
+# =====================================================================
+#  Ekrandaki yazılar kendiliğinden güncellenir: "Toplam: {...}" yazan etiket,
+#  sepete bir şey eklenince ya da indirim kutusu işaretlenince kendisi yenilenir.
+#  Yazı kutuları değişkenlere bağlıdır (->): kullanıcı yazınca değişken değişir,
+#  değişken değişince kutu değişir.
+#  list: sepetin her kalemi için bir satır. Satıra tıklayınca seçilir (-> secili).
+# =====================================================================
+
+type Kalem {
+    ad: text
+    fiyat: float
+    adet: int
+
+    fn tutar() -> float {
+        return fiyat * adet
+    }
+}
+
+var sepet: [Kalem] = []
+var secili = 0                 # seçilen satırın sırası (0 = seçim yok)
+
+var urun = ""
+var fiyat = 0.0
+var adet = 1
+var ogrenci = false
+var mesaj = "Bir ürün yazıp sepete ekle."
+
+fn toplam(sepet: [Kalem]) -> float {
+    var t = 0.0
+    repeat i from 1 to sepet.length {
+        t = t + sepet[i].tutar()
+    }
+    return t
+}
+
+fn odenecek(tutar: float, indirimli: bool) -> float {
+    if indirimli {
+        return tutar * 0.9
+    }
+    return tutar
+}
+
+window "Alışveriş Sepeti" {
+    row {
+        textbox "Ürün" -> urun
+        textbox "Fiyat (TL)" -> fiyat
+        textbox "Adet" -> adet
+    }
+    button "Sepete ekle" {
+        if urun.trim().length is 0 {
+            mesaj = "Önce bir ürün adı yaz."
+        } else if fiyat <= 0 or adet <= 0 {
+            mesaj = "Fiyat ve adet sıfırdan büyük olmalı."
+        } else {
+            sepet.add(Kalem(ad: urun.trim(), fiyat: fiyat, adet: adet))
+            mesaj = "{urun.trim()} eklendi."
+            urun = ""
+            adet = 1
+        }
+    }
+    label mesaj
+
+    list kalem, i in sepet -> secili {
+        label "{i}. {kalem.adet} × {kalem.ad}"
+        label "{kalem.tutar()} TL"
+        button "Sil" {
+            mesaj = "{kalem.ad} silindi."
+            sepet.remove(i)
+            secili = 0
+        }
+    }
+
+    row {
+        button "Seçilenin adedini artır" {
+            if secili > 0 {
+                var k = sepet[secili]
+                k.adet = k.adet + 1
+                sepet[secili] = k
+            } else {
+                mesaj = "Önce listeden bir satır seç."
+            }
+        }
+        button "Azalt" {
+            if secili > 0 and sepet[secili].adet > 1 {
+                var k = sepet[secili]
+                k.adet = k.adet - 1
+                sepet[secili] = k
+            }
+        }
+    }
+    checkbox "Öğrenciyim (%10 indirim)" -> ogrenci
+    label "Ara toplam: {toplam(sepet)} TL"
+    label "Ödenecek: {odenecek(toplam(sepet), ogrenci)} TL"
+}
+
+print("Pencere kapandı. Sepette {sepet.length} kalem vardı, toplam {toplam(sepet)} TL.")

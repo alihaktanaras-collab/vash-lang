@@ -1,0 +1,35 @@
+# Vash in one screen: types, lists, lambdas, errors, permissions, parallelism
+type Product {
+    name: text
+    price: float
+    stock: int = 0
+
+    fn value() -> float {
+        return price * float(stock)
+    }
+}
+
+fn parse_price(t: text) -> float fails {
+    var p = float(t, else: -1.0)
+    if p < 0.0 {
+        fail "not a price: {t}"
+    }
+    return p
+}
+
+fn save(report: text) -> bool {
+    use files                                   # without this line: compile error
+    return write_file("report.txt", report)
+}
+
+var products = [Product(name: "apple", price: 4.5, stock: 30), Product(name: "pear", price: 6.0, stock: 12)]
+products.add(Product(name: "banana", price: try parse_price("9.75"), stock: 25))
+products.sort(by: fn(a, b) => a.value() > b.value())
+var cheap = products.filter(fn(p) => p.price < 7.0)
+print("top:", products[1].name, "cheap:", cheap.length)
+
+var total = 0
+parallel repeat i from 1 to 100000000 {
+    total = total + i % 7                       # all CPU cores, no data race
+}
+print("total:", total, "saved:", save("ok\n"))

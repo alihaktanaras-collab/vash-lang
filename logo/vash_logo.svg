@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 90 778 920" width="778" height="920">
+  <title>Vash</title>
+  <!-- Kalkan: dört yüzey (sol üst açık, sağ üst orta, sol alt orta, sağ alt koyu) -->
+  <path d="M132 122 H488 V512 L132 772 Z" fill="#EB0B45"/>
+  <path d="M488 122 H845 L746 300 L488 512 Z" fill="#C70D3C"/>
+  <path d="M132 772 L488 512 V980 Z" fill="#C30E3B"/>
+  <path d="M845 122 V772 L488 980 V512 L746 300 Z" fill="#A80A30"/>
+  <!-- V -->
+  <path d="M232 306 H356 L489 650 L625 306 H745 L544 788 H432 Z" fill="#FFFFFF"/>
+</svg>

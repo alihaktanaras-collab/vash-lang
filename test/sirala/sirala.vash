@@ -1,0 +1,55 @@
+# liste.sort() ve liste.sort(by: fonksiyon) denemesi
+
+type Ogrenci {
+    ad: text
+    not_: int
+}
+
+fn nota_gore(a: Ogrenci, b: Ogrenci) -> bool {     # yüksek not önce
+    return a.not_ > b.not_
+}
+
+fn buyukten(a: int, b: int) -> bool {
+    return a > b
+}
+
+fn uzunluga_gore(a: text, b: text) -> bool {
+    return a.length < b.length
+}
+
+var sayilar = [5, 3, 9, 1, 7, 3, 0, -4]
+var kopya = sayilar
+sayilar.sort()
+print(sayilar)
+print(kopya)                                   # eski kopya değişmemeli
+sayilar.sort(by: buyukten)
+print(sayilar)
+
+var ondalik = [2.5, -1.0, 3.25, 0.0]
+ondalik.sort()
+print(ondalik)
+
+var adlar = ["zeynep", "ali", "Çiğdem", "can", "bora", "ayşe"]
+adlar.sort()
+print(adlar)
+adlar.sort(by: uzunluga_gore)                  # aynı uzunluktakilerin sırası korunur
+print(adlar)
+
+var sinif = [Ogrenci(ad: "Ali", not_: 70), Ogrenci(ad: "Ece", not_: 95), Ogrenci(ad: "Can", not_: 70), Ogrenci(ad: "Su", not_: 88)]
+sinif.sort(by: nota_gore)
+repeat i from 1 to sinif.length {
+    print(sinif[i].ad, sinif[i].not_)
+}
+
+var buyuk: [int] = []
+repeat i from 1 to 100000 {
+    buyuk.add((i * 7919) % 100003)
+}
+buyuk.sort()
+var dogru = true
+repeat i from 2 to buyuk.length {
+    if buyuk[i - 1] > buyuk[i] {
+        dogru = false
+    }
+}
+print("100000 sayı sıralandı:", dogru)

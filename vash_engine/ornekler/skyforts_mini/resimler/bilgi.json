@@ -1,0 +1,65 @@
+{
+ "tile_w": 32,
+ "tile_h": 16,
+ "grid": 14,
+ "island_origin_x": 228,
+ "island_origin_y": 6,
+ "buildings": {
+  "komuta": {
+   "frame_width": 102,
+   "height": 146,
+   "anchor_x": 51,
+   "anchor_y": 94,
+   "size": 3
+  },
+  "maden": {
+   "frame_width": 70,
+   "height": 110,
+   "anchor_x": 35,
+   "anchor_y": 74,
+   "size": 2
+  },
+  "pompa": {
+   "frame_width": 70,
+   "height": 110,
+   "anchor_x": 35,
+   "anchor_y": 74,
+   "size": 2
+  },
+  "kristal": {
+   "frame_width": 70,
+   "height": 120,
+   "anchor_x": 35,
+   "anchor_y": 84,
+   "size": 2
+  },
+  "depo": {
+   "frame_width": 70,
+   "height": 100,
+   "anchor_x": 35,
+   "anchor_y": 64,
+   "size": 2
+  },
+  "jenerator": {
+   "frame_width": 70,
+   "height": 110,
+   "anchor_x": 35,
+   "anchor_y": 74,
+   "size": 2
+  },
+  "iskele2": {
+   "frame_width": 70,
+   "height": 90,
+   "anchor_x": 35,
+   "anchor_y": 54,
+   "size": 2
+  },
+  "iskele3": {
+   "frame_width": 102,
+   "height": 106,
+   "anchor_x": 51,
+   "anchor_y": 54,
+   "size": 3
+  }
+ }
+}

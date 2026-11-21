@@ -1,0 +1,28 @@
+# Sadece beraber kararlaştırdığımız özellikler
+
+var x = 5                 # yeni değişken, tip tahmin edilir
+variable y: int = 10      # uzun hali + tip açıkça
+var z: integer = 3        # int'in uzun hali
+var liste: [int] = []     # boş liste, tip şart
+
+x = 20                    # değer değiştir
+var a = 1; var b = 2      # aynı satırda iki komut
+
+var sonuc = 2 + 3 * 4     # işlem önceliği: önce çarpma
+var esit = x is 20        # karşılaştırma
+
+write("Toplam: ")         # aynı satırda kal
+print(x + y)              # yaz ve alt satıra geç
+print("x:", x, "y:", y)   # birden fazla değer
+print("z = {z}")          # metin içine değişken
+
+fn kare(x: int) -> int {
+    return x * x
+}
+
+function topla(a: int, b: int) -> int {
+    var sonuc = a + b
+    return sonuc
+}
+
+print(topla(kare(3), 1))

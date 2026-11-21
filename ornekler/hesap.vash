@@ -1,0 +1,57 @@
+# Küçük bir banka hesabı: Vash'ın farklı yanları bir arada
+
+global var EN_AZ = 100.0                 # global: her fonksiyon okuyabilir
+
+var bakiye = 1000.0                      # ana programın değişkenleri: fonksiyonlar 'use' olmadan göremez
+var kayitlar: [text] = []
+
+when bakiye < EN_AZ {                    # şart yanlıştan doğruya döndüğü an, bir kere çalışır
+    print("⚠ Uyarı: bakiye {bakiye} TL'ye düştü!")
+}
+
+enum Islem {
+    Yatir(tutar: float)
+    Cek(tutar: float)
+}
+
+fn uygula(i: Islem) {
+    use change bakiye                    # değiştireceğini açıkça söylüyor
+    use change kayitlar
+    match i {                            # çeşitlerden biri unutulursa derleme hatası
+        Yatir(t) {
+            bakiye = bakiye + t
+            kayitlar.add("+{t}")
+        }
+        Cek(t) {
+            bakiye = bakiye - t
+            kayitlar.add("-{t}")
+        }
+    }
+}
+
+fn son_cekim() -> text? {           # yok olabilen değer: kontrolsüz kullanmak derleme hatası
+    use kayitlar                         # sadece okuyor
+    var sonuc: text? = none
+    repeat i from 1 to kayitlar.length {
+        if kayitlar[i].starts_with("-") {
+            sonuc = kayitlar[i]
+        }
+    }
+    return sonuc
+}
+
+fn kaydet() -> bool {
+    use files                            # diske yazan fonksiyon bunu söylemek zorunda
+    use kayitlar
+    return write_file("hesap_kayit.txt", kayitlar.join("\n"))
+}
+
+uygula(Islem.Yatir(tutar: 250.0))
+uygula(Islem.Cek(tutar: 700.0))
+uygula(Islem.Cek(tutar: 480.0))          # burada 'when' kendiliğinden çalışır
+
+var cekim = son_cekim()
+if cekim is not none {
+    print("Son çekim: {cekim}")
+}
+print("Bakiye: {bakiye} TL · işlemler: {kayitlar.join(", ")} · kaydedildi: {kaydet()}")

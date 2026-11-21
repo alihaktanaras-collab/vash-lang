@@ -1,0 +1,6 @@
+%YAML 1.1
+EditorBuildSettings:
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Sahneler/Ana.unity
+    guid: 029b374f40066be076c0f48cdfbc99f6

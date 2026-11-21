@@ -1,0 +1,51 @@
+# Sözlükler: anahtar → değer tablosu
+
+# --- 1) Temel kullanım ---
+var notlar = {
+    "Ali": 90,
+    "Ayşe": 85,
+    "Can": 72
+}
+notlar["Zeynep"] = 95                       # yeni anahtar: eklenir
+notlar["Can"] = 78                          # var olan: değişir
+print(notlar)
+print("Ali'nin notu:", notlar["Ali"], "  kaç kişi:", notlar.length)
+print("Deniz var mı?", notlar.has("Deniz"), "  notu:", notlar.get("Deniz", else: 0))
+notlar.remove("Ayşe")
+print("Kalanlar:", notlar.keys().join(", "))
+
+# --- 2) Kelime sayacı ---
+var metin = "bir varmış bir yokmuş evvel zaman içinde bir köyde bir kız varmış"
+var sayilar: {text: int} = {}
+var kelimeler = metin.split()
+repeat i from 1 to kelimeler.length {
+    var k = kelimeler[i]
+    sayilar[k] = sayilar.get(k, else: 0) + 1
+}
+print("\nKelime sayıları:", sayilar)
+
+# en çok geçen kelime
+var en_cok = ""
+var en_fazla = 0
+var anahtarlar = sayilar.keys()
+repeat i from 1 to anahtarlar.length {
+    if sayilar[anahtarlar[i]] > en_fazla {
+        en_cok = anahtarlar[i]
+        en_fazla = sayilar[en_cok]
+    }
+}
+print("En çok geçen: \"{en_cok}\" ({en_fazla} kez)")
+
+# --- 3) Her değer ayrıdır (kopyala-yaz) ---
+var kopya = notlar
+kopya["Ali"] = 0
+print("\nasıl:", notlar["Ali"], "  kopya:", kopya["Ali"])
+
+# --- 4) Sayı anahtarlı, liste değerli ---
+var siniflar: {int: [text]} = {}
+siniflar[9] = ["Ali", "Can"]
+siniflar[10] = ["Zeynep"]
+print("9. sınıf:", siniflar[9].join(", "), "  10. sınıf:", siniflar[10])
+
+# --- 5) Olmayan anahtar hata verir (denemek için baştaki # işaretini sil) ---
+# print(notlar["Ayşe"])      → ÇALIŞMA HATASI: Sözlükte "Ayşe" anahtarı yok.

@@ -1,0 +1,7 @@
+fn bol(a: int, b: int) -> int fails {
+    if b is 0 { fail "sıfır" }
+    return a // b
+}
+fn hesap() -> int {
+    return try bol(1, 2)
+}

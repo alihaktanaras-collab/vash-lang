@@ -1,0 +1,196 @@
+<!doctype html>
+<!--
+  Vash pencere şablonu.
+  Derleyici bu dosyayı programın içine gömer; __BASLIK__ ve __TANIM__ yerine
+  pencerenin başlığını ve parçaların listesini (JSON) koyar.
+  Yazıların ve değerlerin kendisi program çalışırken sunucudan gelir.
+-->
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__BASLIK__</title>
+<style>
+  :root {
+    --zemin: #f6f7f9; --kart: #ffffff; --yazi: #1d2330; --soluk: #667085;
+    --cizgi: #d9dde4; --vurgu: #3b5bdb; --vurgu-koyu: #2f4bc0; --vurgu-acik: #e8edff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --zemin: #15181e; --kart: #1e222a; --yazi: #e6e8ec; --soluk: #9aa3b2;
+      --cizgi: #343a46; --vurgu: #7c95ff; --vurgu-koyu: #6680f5; --vurgu-acik: #262f4d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--zemin); color: var(--yazi);
+    font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 22px 20px 28px;
+    display: flex; flex-direction: column; gap: 12px; }
+  h1 { margin: 0 0 4px; font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
+  .label { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .row > .alan { flex: 1 1 160px; }
+  button { font: inherit; font-weight: 600; color: #fff; background: var(--vurgu);
+    border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+    transition: background .12s, transform .06s; }
+  button:hover { background: var(--vurgu-koyu); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--vurgu); outline-offset: 2px; }
+  .alan { display: flex; flex-direction: column; gap: 4px; }
+  .alan > span { font-size: 13px; color: var(--soluk); font-weight: 600; }
+  .alan input { font: inherit; color: var(--yazi); background: var(--kart);
+    border: 1px solid var(--cizgi); border-radius: 8px; padding: 8px 10px; width: 100%; }
+  .alan input:focus { border-color: var(--vurgu); outline: none; box-shadow: 0 0 0 3px var(--vurgu-acik); }
+  .onay { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .onay input { width: 18px; height: 18px; accent-color: var(--vurgu); }
+  .liste { background: var(--kart); border: 1px solid var(--cizgi); border-radius: 10px;
+    overflow: hidden; }
+  .liste:empty { display: none; }
+  .satir { display: flex; gap: 10px; align-items: center; padding: 8px 12px;
+    border-top: 1px solid var(--cizgi); }
+  .satir:first-child { border-top: 0; }
+  main > button { align-self: flex-start; }
+  .satir > .label { flex: 0 0 auto; }
+  .satir > .label:first-child { flex: 1 1 auto; }    /* ilk yazı geniş, diğerleri sağa yaslı */
+  .satir > .row { flex: 1 1 auto; }
+  .satir button { padding: 5px 12px; font-size: 13px; }
+  .secilebilir .satir { cursor: pointer; }
+  .secilebilir .satir:hover { background: var(--zemin); }
+  .satir.secili, .secilebilir .satir.secili:hover { background: var(--vurgu-acik);
+    box-shadow: inset 3px 0 0 var(--vurgu); }
+  #kapandi { display: none; color: var(--soluk); text-align: center; padding: 40px 0; }
+  body.kapali main { display: none; }
+  body.kapali #kapandi { display: block; }
+</style>
+</head>
+<body>
+<main id="kok"><h1>__BASLIK__</h1></main>
+<div id="kapandi">Program bitti. Bu pencereyi kapatabilirsin.</div>
+<script>
+const TANIM = __TANIM__;
+const ogeler = {};          // numara → { tur, yazi (yazının yeri), giris (input) }
+const satirOgeleri = {};    // "numara:satır" → { yazi }   (list satırlarındaki parçalar)
+
+// satir: bir list satırının içindeysek o satırın numarası (1, 2, ...), değilse 0
+function kur(liste, ebeveyn, satir = 0) {
+  for (const o of liste) {
+    let el;
+    const kaydet = (bilgi) => {
+      if (satir) satirOgeleri[o.no + ":" + satir] = bilgi; else ogeler[o.no] = bilgi;
+    };
+    if (o.t === "label") {
+      el = document.createElement("div");
+      el.className = "label";
+      kaydet({ tur: o.t, yazi: el });
+    } else if (o.t === "button") {
+      el = document.createElement("button");
+      el.onclick = (olay) => { olay.stopPropagation(); gonder(o.no, "", satir); };
+      kaydet({ tur: o.t, yazi: el });
+    } else if (o.t === "list") {
+      el = document.createElement("div");
+      el.className = "liste" + (o.secim ? " secilebilir" : "");
+      ogeler[o.no] = { tur: o.t, kutu: el, sablon: o.c, secim: o.secim, satirlar: [], secili: 0 };
+    } else if (o.t === "textbox") {
+      el = document.createElement("label");
+      el.className = "alan";
+      const s = document.createElement("span");
+      const g = document.createElement("input");
+      g.type = "text";
+      if (o.tip !== "text") g.inputMode = o.tip === "int" ? "numeric" : "decimal";
+      g.oninput = () => gonder(o.no, g.value);
+      el.append(s, g);
+      ogeler[o.no] = { tur: o.t, yazi: s, giris: g };
+    } else if (o.t === "checkbox") {
+      el = document.createElement("label");
+      el.className = "onay";
+      const g = document.createElement("input");
+      g.type = "checkbox";
+      const s = document.createElement("span");
+      g.onchange = () => gonder(o.no, g.checked ? "true" : "false");
+      el.append(g, s);
+      ogeler[o.no] = { tur: o.t, yazi: s, giris: g };
+    } else if (o.t === "row") {
+      el = document.createElement("div");
+      el.className = "row";
+      kur(o.c, el, satir);
+    }
+    ebeveyn.append(el);
+  }
+}
+
+// Listenin satır sayısını n yap: eksikse şablondan yeni satır kur, fazlaysa sondan sil
+function satirSayisi(L, n) {
+  while (L.satirlar.length < n) {
+    const r = L.satirlar.length + 1;
+    const s = document.createElement("div");
+    s.className = "satir";
+    if (L.secim) s.onclick = () => { secimGoster(L, r); gonder(L.no, String(r)); };
+    kur(L.sablon, s, r);
+    L.kutu.append(s);
+    L.satirlar.push(s);
+  }
+  while (L.satirlar.length > n) {
+    const r = L.satirlar.length;
+    L.satirlar.pop().remove();
+    for (const k of Object.keys(satirOgeleri)) if (k.endsWith(":" + r)) delete satirOgeleri[k];
+  }
+  secimGoster(L, L.secili);
+}
+
+function secimGoster(L, r) {
+  L.secili = r;
+  L.satirlar.forEach((s, i) => s.classList.toggle("secili", i + 1 === r));
+}
+
+// Her kutuya kullanıcı kaç kere dokundu? (yarışları önlemek için)
+const surum = {};
+
+// Sunucudan gelen değişiklikler: [[no, "n"|"m"|"d", değer, (satır)], ...]
+function uygula(degisenler, kimden, gonderilirken) {
+  for (const [no, tur, v, satir] of degisenler) {
+    if (satir) {                                         // bir list satırındaki yazı
+      const so = satirOgeleri[no + ":" + satir];
+      if (so) so.yazi.textContent = v;
+      continue;
+    }
+    const o = ogeler[no];
+    if (!o) continue;
+    if (tur === "n") { o.no = no; satirSayisi(o, Number(v)); continue; }
+    if (tur === "m") { o.yazi.textContent = v; continue; }
+    if (o.tur === "list") {                              // seçilen satır
+      if ((surum[no] || 0) === (gonderilirken[no] || 0)) secimGoster(o, Number(v));
+      continue;
+    }
+    // Kullanıcı bu istekten SONRA bu kutuya yine yazdıysa, ekrandaki onun yeni yazısıdır;
+    // o yazı da sırayla programa gidecek. Eski cevapla üzerine yazma.
+    if ((surum[no] || 0) !== (gonderilirken[no] || 0)) continue;
+    // Kullanıcı şu an bu kutuya yazıyorsa, kendi olayının cevabıyla yazdığını bozma ("007" → "7")
+    if (no === kimden && document.activeElement === o.giris) continue;
+    if (o.tur === "checkbox") o.giris.checked = (v === "true");
+    else if (o.giris.value !== v) o.giris.value = v;
+  }
+}
+
+// Olaylar sırayla gitsin: biri bitmeden diğeri gönderilmez
+let sira = Promise.resolve();
+function gonder(no, deger, satir = 0) {
+  const o = no >= 0 && !satir ? ogeler[no] : null;
+  if (o && (o.giris || o.tur === "list")) surum[no] = (surum[no] || 0) + 1;
+  const anlik = { ...surum };                 // bu olay oluştuğu andaki sürümler
+  sira = sira.then(async () => {
+    try {
+      const r = await fetch("/olay", { method: "POST", body: no + " " + satir + "\n" + deger });
+      uygula(await r.json(), no, anlik);
+    } catch (e) { bitti(); }
+  });
+}
+
+function bitti() { document.body.classList.add("kapali"); }
+
+kur(TANIM, document.getElementById("kok"));
+gonder(-1, "");                                                   // ilk durumu iste
+setInterval(() => fetch("/nabiz", { method: "POST" }).catch(bitti), 2000);   // "hâlâ açığım"
+addEventListener("pagehide", () => navigator.sendBeacon("/kapat"));
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+import http
+var sunucu = http.listen(8093) else: http.Server(id: 0, port: 0)
+var calisiyor = true
+repeat while calisiyor {
+    var istek = sunucu.next()
+    if istek.path is "/kapat" {
+        calisiyor = false
+    }
+    istek.reply(200, "\{\"yol\": \"{istek.path}\"\}")
+}

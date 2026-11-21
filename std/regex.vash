@@ -1,0 +1,920 @@
+# regex: pattern matching for text (regular expressions), written in Vash
+#
+# Usually used through text methods (no import needed):
+#   "2024-05-17".matches("\\d\{4\}-\\d\{2\}-\\d\{2\}")     # true: the WHOLE text fits the pattern
+#   "Tel: 555-1234".find("\\d+")                           # "555"  (text?: none if nothing is found)
+#   "a1 b22 c333".find_all("\\d+")                         # ["1", "22", "333"]
+#   "Ali Veli".replace_pattern("(\\w+) (\\w+)", "$2 $1")   # "Veli Ali"
+# Note: in Vash text, a backslash is written \\ and braces are written \{ \}.
+#
+# Supported: .  [abc]  [^a-z]  \d \w \s \D \W \S  \b \B  ^ $  * + ? {m} {m,} {m,n}
+#            lazy forms *? +? ?? {m,n}?   ( ) groups   (?: ) groups that are not captured   a|b
+#            \n \t \r \f \v   \. \( \[ ... (any punctuation after \ means itself)
+# '.' matches any character except a line break. \w includes letters of every language (ç ğ ı ö ş ü ...).
+# In replacements: $0 = the whole match, $1 ... $9 = groups, $$ = a single $.
+#
+# The engine (a "Pike VM") walks the text once, keeping every possible way of matching at the same time.
+# Its work grows only in proportion to text length × pattern length: no pattern can make it hang.
+
+extern "msvcrt" {
+    fn _exit(code: i32)
+    fn _getenv(name: text) -> text          # only reads VASH_DIL (the language for error messages)
+}
+
+# Windows display language (31 = Turkish)
+extern "kernel32" {
+    fn _GetUserDefaultUILanguage() -> i32
+}
+
+global var _OP_CHAR = 1
+global var _OP_ANY = 2
+global var _OP_CLASS = 3
+global var _OP_NCLASS = 4
+global var _OP_MATCH = 5
+global var _OP_JMP = 6
+global var _OP_SPLIT = 7
+global var _OP_SAVE = 8
+global var _OP_BOL = 9
+global var _OP_EOL = 10
+global var _OP_WORDB = 11
+global var _OP_NWORDB = 12
+global var _INF = -1
+
+# A piece of program. Jump targets are positions inside the piece (from 1).
+# Character classes are stored as triples in cls: [kind, low, high]
+#   kind 0: low..high   1: \d   2: \w   3: \s   4: \D   5: \W   6: \S
+type _Frag {
+    ops: [int] = []
+    a: [int] = []
+    b: [int] = []
+    cls: [int] = []
+}
+
+type _Prog {
+    frag: _Frag
+    groups: int
+}
+
+type _Res {
+    frag: _Frag
+    pos: int
+    groups: int
+    error: text = ""
+}
+
+# =====================================================================
+#  Public functions (text methods call these)
+# =====================================================================
+fn matches(t: text, pattern: text) -> bool {          # does the WHOLE text fit?
+    return _matches_p(t, _compile(pattern))
+}
+
+fn find(t: text, pattern: text) -> text? {            # first match, or none
+    return _find_p(t, _compile(pattern))
+}
+
+fn find_all(t: text, pattern: text) -> [text] {       # every match, left to right, not overlapping
+    return _find_all_p(t, _compile(pattern))
+}
+
+fn replace_pattern(t: text, pattern: text, replacement: text) -> text {
+    return _replace_p(t, _compile(pattern), replacement)
+}
+
+# The same, with an already compiled pattern (the compiler uses these for patterns written as plain text:
+# such a pattern is compiled only once, when the program starts).
+fn _matches_p(t: text, prog: _Prog) -> bool {
+    return _run(prog, t, t.length, 1, true, true, false).length > 0
+}
+
+fn _find_p(t: text, prog: _Prog) -> text? {
+    var m = _run(prog, t, t.length, 1, false, false, false)
+    if m.length is 0 {
+        return none
+    }
+    return t[m[1] to m[2] - 1]
+}
+
+fn _find_all_p(t: text, prog: _Prog) -> [text] {
+    var ncap = 2 * (prog.groups + 1)
+    var m = _run(prog, t, t.length, 1, false, false, true)
+    var result: [text] = []
+    repeat k from 1 to m.length // ncap {
+        var b = (k - 1) * ncap
+        result.add(t[m[b + 1] to m[b + 2] - 1])
+    }
+    return result
+}
+
+fn _replace_p(t: text, prog: _Prog, replacement: text) -> text {
+    var ncap = 2 * (prog.groups + 1)
+    var n = t.length
+    var all = _run(prog, t, n, 1, false, false, true)
+    if all.length is 0 {
+        return t
+    }
+    var plain = not replacement.contains("$")
+    var pieces: [text] = []
+    var last = 1
+    repeat k from 1 to all.length // ncap {
+        var b = (k - 1) * ncap
+        var s = all[b + 1]
+        var e = all[b + 2]
+        pieces.add(t[last to s - 1])
+        if plain {
+            pieces.add(replacement)
+        } else {
+            var m: [int] = []
+            repeat j from 1 to ncap {
+                m.add(all[b + j])
+            }
+            pieces.add(_expand(replacement, t, m))
+        }
+        last = e
+        if e is s {                                   # empty match: keep the character after it
+            if e <= n {
+                pieces.add(t[e to e])
+            }
+            last = e + 1
+        }
+    }
+    if last <= n {
+        pieces.add(t[last to n])
+    }
+    return pieces.join("")
+}
+
+# $0 $1 ... $9 and $$ inside a replacement
+fn _expand(r: text, t: text, m: [int]) -> text {
+    if not r.contains("$") {
+        return r
+    }
+    var out: [text] = []
+    var k = 1
+    var rn = r.length
+    repeat while k <= rn {
+        var c = r[k]
+        if c is "$" and k < rn {
+            var d = code(r[k + 1]) - 48
+            if d >= 0 and d <= 9 {
+                if 2 * d + 2 <= m.length and m[2 * d + 1] > 0 and m[2 * d + 2] > 0 {
+                    out.add(t[m[2 * d + 1] to m[2 * d + 2] - 1])
+                }
+                k = k + 2
+                skip
+            }
+            if r[k + 1] is "$" {
+                out.add("$")
+                k = k + 2
+                skip
+            }
+        }
+        out.add(c)
+        k = k + 1
+    }
+    return out.join("")
+}
+
+# =====================================================================
+#  Running: the Pike VM
+# =====================================================================
+#  Returns the match positions [start, end+1, group1 start, group1 end+1, ...] (in characters),
+#  or [] if there is no match. anchored: only try at 'start'. whole: the match must reach the end.
+#  all: keep going after each match and return every match's positions one after another.
+fn _run(prog: _Prog, t: text, n: int, start: int, anchored: bool, whole: bool, all: bool) -> [int] {
+    var ops = prog.frag.ops
+    var oa = prog.frag.a
+    var ob = prog.frag.b
+    var cls = prog.frag.cls
+    var plen = ops.length
+    var ncap = 2 * (prog.groups + 1)
+    var mark: [int] = []                              # mark[pc] = step in which pc was last added
+    repeat i from 1 to plen {
+        mark.add(0)
+    }
+    var lst_pc: [int] = []                            # threads waiting for the character at 'pos', best first
+    var lst_caps: [int] = []
+    var cnt = 0
+    var stk_pc: [int] = []                            # threads still to follow (top = best)
+    var stk_caps: [int] = []
+    var top = 1
+    var c: [int] = []
+    stk_pc.add(1)
+    repeat i from 1 to ncap {
+        c.add(-1)
+        stk_caps.add(-1)
+    }
+    var matched: [int] = []
+    var results: [int] = []
+    var pos = start
+    var step = 0
+    # Shortcut: if every match must begin with one known character (or class), and only the
+    # "start a new try" thread is alive, jump straight to the next place where that character is.
+    var fop = 0
+    if plen >= 2 and not anchored {
+        fop = ops[2]
+        if fop is not _OP_CHAR and fop is not _OP_CLASS and fop is not _OP_NCLASS {
+            fop = 0
+        }
+    }
+    var only_start = true
+    repeat while true {
+        if fop > 0 and only_start and matched.length is 0 {
+            repeat while pos <= n and not _accepts(fop, oa[2], ob[2], cls, code(t[pos])) {
+                pos = pos + 1
+            }
+        }
+        # 1) follow jumps, splits, saves and checks until every thread waits for a character
+        cnt = 0
+        step = step + 1
+        repeat while top > 0 {
+            var pc = stk_pc[top]
+            var base = (top - 1) * ncap
+            repeat j from 1 to ncap {
+                c[j] = stk_caps[base + j]
+            }
+            top = top - 1
+            if mark[pc] is step {
+                skip
+            }
+            mark[pc] = step
+            var op = ops[pc]
+            var t1 = 0                                # next instruction to follow
+            var t2 = 0                                # the less preferred alternative
+            if op is _OP_JMP {
+                t1 = oa[pc]
+            } else if op is _OP_SPLIT {
+                t1 = oa[pc]
+                t2 = ob[pc]
+            } else if op is _OP_SAVE {
+                c[oa[pc]] = pos
+                t1 = pc + 1
+            } else if op is _OP_BOL {
+                if pos is 1 {
+                    t1 = pc + 1
+                }
+            } else if op is _OP_EOL {
+                if pos is n + 1 {
+                    t1 = pc + 1
+                }
+            } else if op is _OP_WORDB or op is _OP_NWORDB {
+                var before = pos > 1 and _is_word(code(t[pos - 1]))
+                var after = pos <= n and _is_word(code(t[pos]))
+                if (before is not after) is (op is _OP_WORDB) {
+                    t1 = pc + 1
+                }
+            } else {                                  # waits for a character (or is MATCH)
+                cnt = cnt + 1
+                if cnt > lst_pc.length {
+                    lst_pc.add(pc)
+                } else {
+                    lst_pc[cnt] = pc
+                }
+                var lb = (cnt - 1) * ncap
+                repeat j from 1 to ncap {
+                    if lb + j > lst_caps.length {
+                        lst_caps.add(c[j])
+                    } else {
+                        lst_caps[lb + j] = c[j]
+                    }
+                }
+            }
+            repeat w from 1 to 2 {                    # push the less preferred one first
+                var target = t2
+                if w is 2 {
+                    target = t1
+                }
+                if target > 0 {
+                    top = top + 1
+                    if top > stk_pc.length {
+                        stk_pc.add(target)
+                    } else {
+                        stk_pc[top] = target
+                    }
+                    var sb = (top - 1) * ncap
+                    repeat j from 1 to ncap {
+                        if sb + j > stk_caps.length {
+                            stk_caps.add(c[j])
+                        } else {
+                            stk_caps[sb + j] = c[j]
+                        }
+                    }
+                }
+            }
+        }
+
+        # 2) a finished thread: remember it; the threads after it are less preferred, drop them
+        var cut = cnt
+        repeat k from 1 to cnt {
+            if ops[lst_pc[k]] is _OP_MATCH and (not whole or pos is n + 1) {
+                matched = []
+                var mb = (k - 1) * ncap
+                repeat j from 1 to ncap {
+                    matched.add(lst_caps[mb + j])
+                }
+                cut = k - 1
+                stop
+            }
+        }
+        var at_end = pos > n
+        if at_end and (not all or matched.length is 0) {
+            stop
+        }
+        if at_end {
+            top = 0                                   # no characters left: the last match is final
+        } else {
+            # 3) read one character; the threads that accept it move on to the next position
+            var ch = code(t[pos])
+            if matched.length is 0 and not anchored {     # a new try starting at the next position (least preferred)
+                top = top + 1
+                if top > stk_pc.length {
+                    stk_pc.add(1)
+                } else {
+                    stk_pc[top] = 1
+                }
+                var nb = (top - 1) * ncap
+                repeat j from 1 to ncap {
+                    if nb + j > stk_caps.length {
+                        stk_caps.add(-1)
+                    } else {
+                        stk_caps[nb + j] = -1
+                    }
+                }
+            }
+            only_start = true
+            repeat k from cut to 1 step -1 {
+                var kpc = lst_pc[k]
+                if _accepts(ops[kpc], oa[kpc], ob[kpc], cls, ch) {
+                    only_start = false
+                    top = top + 1
+                    if top > stk_pc.length {
+                        stk_pc.add(kpc + 1)
+                    } else {
+                        stk_pc[top] = kpc + 1
+                    }
+                    var kb = (top - 1) * ncap
+                    var lk = (k - 1) * ncap
+                    repeat j from 1 to ncap {
+                        if kb + j > stk_caps.length {
+                            stk_caps.add(lst_caps[lk + j])
+                        } else {
+                            stk_caps[kb + j] = lst_caps[lk + j]
+                        }
+                    }
+                }
+            }
+        }
+        if top is 0 {
+            if not all or matched.length is 0 {
+                stop
+            }
+            # every way of matching longer has died: this match is final. Keep it and look for the next one.
+            repeat j from 1 to ncap {
+                results.add(matched[j])
+            }
+            var s = matched[1]
+            var e = matched[2]
+            matched = []
+            pos = e
+            if e is s {
+                pos = e + 1                           # empty match: the next try starts one character later
+            }
+            if pos > n + 1 {
+                stop
+            }
+            top = 1
+            stk_pc[1] = 1
+            repeat j from 1 to ncap {
+                stk_caps[j] = -1
+            }
+            only_start = true
+            skip
+        }
+        pos = pos + 1
+    }
+    if not all {
+        return matched
+    }
+    repeat j from 1 to matched.length {
+        results.add(matched[j])
+    }
+    return results
+}
+
+fn _accepts(op: int, a: int, b: int, cls: [int], ch: int) -> bool {   # does this instruction take character ch?
+    if op is _OP_CHAR {
+        return ch is a
+    }
+    if op is _OP_ANY {
+        return ch is not 10
+    }
+    if op is _OP_CLASS {
+        return _in_class(cls, a, b, ch)
+    }
+    if op is _OP_NCLASS {
+        return not _in_class(cls, a, b, ch)
+    }
+    return false
+}
+
+fn _in_class(cls: [int], start: int, count: int, ch: int) -> bool {
+    repeat k from 0 to count - 1 {
+        var b = start + 3 * k
+        var kind = cls[b]
+        if kind is 0 {
+            if ch >= cls[b + 1] and ch <= cls[b + 2] {
+                return true
+            }
+        } else if kind is 1 {
+            if _is_digit(ch) {
+                return true
+            }
+        } else if kind is 2 {
+            if _is_word(ch) {
+                return true
+            }
+        } else if kind is 3 {
+            if _is_space(ch) {
+                return true
+            }
+        } else if kind is 4 {
+            if not _is_digit(ch) {
+                return true
+            }
+        } else if kind is 5 {
+            if not _is_word(ch) {
+                return true
+            }
+        } else if not _is_space(ch) {
+            return true
+        }
+    }
+    return false
+}
+
+fn _is_digit(ch: int) -> bool {
+    return ch >= 48 and ch <= 57
+}
+
+fn _is_word(ch: int) -> bool {                       # letters (every language), digits, _
+    if ch < 128 {
+        return (ch >= 48 and ch <= 57) or (ch >= 65 and ch <= 90) or (ch >= 97 and ch <= 122) or ch is 95
+    }
+    if ch < 192 or ch is 215 or ch is 247 {
+        return false
+    }
+    return not ((ch >= 8192 and ch <= 8303) or (ch >= 12288 and ch <= 12351))
+}
+
+fn _is_space(ch: int) -> bool {
+    return ch is 32 or (ch >= 9 and ch <= 13) or ch is 160
+}
+
+# =====================================================================
+#  Compiling: pattern → program
+# =====================================================================
+fn _compile(pattern: text) -> _Prog {
+    var p: [int] = []
+    repeat i from 1 to pattern.length {
+        p.add(code(pattern[i]))
+    }
+    var r = _parse_alt(p, 1, 0, 0)
+    if r.error.length is 0 and r.pos <= p.length {
+        r = _err(r.pos, r.groups, "')' has no matching '('")
+    }
+    if r.error.length > 0 {
+        _bad_pattern(pattern, r.pos, r.error)
+    }
+    var f = _join(_join(_one(_OP_SAVE, 1, 0), r.frag), _one(_OP_SAVE, 2, 0))
+    f = _join(f, _one(_OP_MATCH, 0, 0))
+    return _Prog(frag: f, groups: r.groups)
+}
+
+fn _bad_pattern(pattern: text, pos: int, message: text) {
+    print("")
+    print(_m("ÇALIŞMA HATASI: düzenli ifade (regex) hatalı, {pos}. harfte: {message}",
+             "RUNTIME ERROR: the regular expression (regex) is wrong at letter {pos}: {message}"))
+    print(_m("   desen: {pattern}", "   pattern: {pattern}"))
+    _exit(1)
+}
+
+# Error messages: Turkish or English. VASH_DIL=tr|en; otherwise Turkish if Windows is Turkish.
+fn _tr() -> bool {
+    var d = _getenv("VASH_DIL")
+    if d.starts_with("t") or d.starts_with("T") {
+        return true
+    }
+    if d.starts_with("e") or d.starts_with("E") {
+        return false
+    }
+    return _GetUserDefaultUILanguage() % 1024 is 31
+}
+
+fn _m(tr: text, en: text) -> text {
+    if _tr() {
+        return tr
+    }
+    return en
+}
+
+fn _ok(f: _Frag, pos: int, g: int) -> _Res {
+    return _Res(frag: f, pos: pos, groups: g)
+}
+
+fn _err(pos: int, g: int, message: text) -> _Res {
+    return _Res(frag: _Frag(), pos: pos, groups: g, error: message)
+}
+
+fn _parse_alt(p: [int], i: int, g: int, depth: int) -> _Res {
+    if depth > 200 {
+        return _err(i, g, "groups are nested too deeply")
+    }
+    var r = _parse_concat(p, i, g, depth)
+    if r.error.length > 0 {
+        return r
+    }
+    var alts: [_Frag] = [r.frag]
+    var pos = r.pos
+    var groups = r.groups
+    repeat while pos <= p.length and p[pos] is 124 {          # |
+        var r2 = _parse_concat(p, pos + 1, groups, depth)
+        if r2.error.length > 0 {
+            return r2
+        }
+        alts.add(r2.frag)
+        pos = r2.pos
+        groups = r2.groups
+    }
+    var f = alts[alts.length]
+    repeat k from alts.length - 1 to 1 step -1 {
+        f = _alt2(alts[k], f)
+    }
+    return _ok(f, pos, groups)
+}
+
+fn _parse_concat(p: [int], i: int, g: int, depth: int) -> _Res {
+    var f = _Frag()
+    var pos = i
+    var groups = g
+    repeat while pos <= p.length and p[pos] is not 124 and p[pos] is not 41 {   # | )
+        var r = _parse_repeat(p, pos, groups, depth)
+        if r.error.length > 0 {
+            return r
+        }
+        f = _join(f, r.frag)
+        pos = r.pos
+        groups = r.groups
+    }
+    return _ok(f, pos, groups)
+}
+
+fn _parse_repeat(p: [int], i: int, g: int, depth: int) -> _Res {
+    var r = _parse_atom(p, i, g, depth)
+    if r.error.length > 0 {
+        return r
+    }
+    var f = r.frag
+    var pos = r.pos
+    repeat while pos <= p.length {
+        var c = p[pos]
+        var lo = -2                                   # -2: no repeat sign here
+        var hi = 0
+        var next = pos + 1
+        if c is 42 {                                  # *
+            lo = 0
+            hi = _INF
+        } else if c is 43 {                           # +
+            lo = 1
+            hi = _INF
+        } else if c is 63 {                           # ?
+            lo = 0
+            hi = 1
+        } else if c is 123 {                          # {m,n}
+            var q = _parse_braces(p, pos)
+            if q.length is 0 {
+                stop                                  # not a repeat: '{' is an ordinary character
+            }
+            lo = q[1]
+            hi = q[2]
+            next = q[3]
+        }
+        if lo is -2 {
+            stop
+        }
+        if hi is not _INF and hi < lo {
+            return _err(pos, r.groups, "in \{m,n\} n is smaller than m")
+        }
+        if lo > 1000 or hi > 1000 {
+            return _err(pos, r.groups, "a repeat count can be at most 1000")
+        }
+        var greedy = true
+        if next <= p.length and p[next] is 63 {      # *? +? ?? : as few as possible
+            greedy = false
+            next = next + 1
+        }
+        if lo is 0 and hi is _INF {
+            f = _star(f, greedy)
+        } else if lo is 1 and hi is _INF {
+            f = _plus(f, greedy)
+        } else if lo is 0 and hi is 1 {
+            f = _quest(f, greedy)
+        } else {
+            f = _range(f, lo, hi, greedy)
+        }
+        if f.ops.length > 50000 {
+            return _err(pos, r.groups, "the pattern becomes too large")
+        }
+        pos = next
+    }
+    return _ok(f, pos, r.groups)
+}
+
+# {m} {m,} {m,n} → [m, n (or _INF), position after '}'], or [] if this is not a repeat
+fn _parse_braces(p: [int], pos: int) -> [int] {
+    var none_: [int] = []
+    var i = pos + 1
+    var m = 0
+    var digits = 0
+    repeat while i <= p.length and _is_digit(p[i]) {
+        if m < 100000 {
+            m = m * 10 + p[i] - 48
+        }
+        digits = digits + 1
+        i = i + 1
+    }
+    if digits is 0 {
+        return none_
+    }
+    var n = m
+    if i <= p.length and p[i] is 44 {                 # ,
+        i = i + 1
+        var v = 0
+        var d2 = 0
+        repeat while i <= p.length and _is_digit(p[i]) {
+            if v < 100000 {
+                v = v * 10 + p[i] - 48
+            }
+            d2 = d2 + 1
+            i = i + 1
+        }
+        n = _INF
+        if d2 > 0 {
+            n = v
+        }
+    }
+    if i > p.length or p[i] is not 125 {
+        return none_
+    }
+    return [m, n, i + 1]
+}
+
+fn _parse_atom(p: [int], i: int, g: int, depth: int) -> _Res {
+    var c = p[i]
+    if c is 40 {                                      # (
+        var capture = true
+        var start = i + 1
+        if start + 1 <= p.length and p[start] is 63 and p[start + 1] is 58 {   # (?:
+            capture = false
+            start = start + 2
+        } else if start <= p.length and p[start] is 63 {
+            return _err(i, g, "only (?: ) is supported among (? ...) groups")
+        }
+        var groups = g
+        var index = 0
+        if capture {
+            groups = g + 1
+            index = groups
+        }
+        var r = _parse_alt(p, start, groups, depth + 1)
+        if r.error.length > 0 {
+            return r
+        }
+        if r.pos > p.length or p[r.pos] is not 41 {
+            return _err(i, r.groups, "this '(' is never closed")
+        }
+        var f = r.frag
+        if capture {
+            f = _join(_join(_one(_OP_SAVE, 2 * index + 1, 0), f), _one(_OP_SAVE, 2 * index + 2, 0))
+        }
+        return _ok(f, r.pos + 1, r.groups)
+    }
+    if c is 91 {                                      # [
+        return _parse_class(p, i, g)
+    }
+    if c is 46 {                                      # .
+        return _ok(_one(_OP_ANY, 0, 0), i + 1, g)
+    }
+    if c is 94 {                                      # ^
+        return _ok(_one(_OP_BOL, 0, 0), i + 1, g)
+    }
+    if c is 36 {                                      # $
+        return _ok(_one(_OP_EOL, 0, 0), i + 1, g)
+    }
+    if c is 42 or c is 43 or c is 63 {
+        return _err(i, g, "'{char(c)}' has nothing before it to repeat")
+    }
+    if c is 92 {                                      # \
+        if i + 1 > p.length {
+            return _err(i, g, "the pattern ends with a lone '\\'")
+        }
+        var e = p[i + 1]
+        if e is 98 {                                  # \b
+            return _ok(_one(_OP_WORDB, 0, 0), i + 2, g)
+        }
+        if e is 66 {                                  # \B
+            return _ok(_one(_OP_NWORDB, 0, 0), i + 2, g)
+        }
+        var kind = _escape_kind(e)
+        if kind > 0 {
+            return _ok(_class_frag([kind, 0, 0], false), i + 2, g)
+        }
+        var lit = _escape_char(e)
+        if lit < 0 {
+            return _err(i, g, "unknown escape '\\{char(e)}'")
+        }
+        return _ok(_one(_OP_CHAR, lit, 0), i + 2, g)
+    }
+    return _ok(_one(_OP_CHAR, c, 0), i + 1, g)
+}
+
+fn _parse_class(p: [int], i: int, g: int) -> _Res {
+    var j = i + 1
+    var negate = false
+    if j <= p.length and p[j] is 94 {                 # [^
+        negate = true
+        j = j + 1
+    }
+    var items: [int] = []
+    var first = true
+    repeat while true {
+        if j > p.length {
+            return _err(i, g, "this '[' is never closed")
+        }
+        var c = p[j]
+        if c is 93 and not first {                    # ]
+            stop
+        }
+        first = false
+        var lo = c
+        if c is 92 {                                  # \ inside [ ]
+            if j + 1 > p.length {
+                return _err(i, g, "this '[' is never closed")
+            }
+            var e = p[j + 1]
+            var kind = _escape_kind(e)
+            if kind > 0 {
+                items.add(kind)
+                items.add(0)
+                items.add(0)
+                j = j + 2
+                skip
+            }
+            lo = _escape_char(e)
+            if e is 98 {
+                lo = 8                                # [\b] is the backspace character
+            }
+            if lo < 0 {
+                return _err(j, g, "unknown escape '\\{char(e)}'")
+            }
+            j = j + 2
+        } else {
+            j = j + 1
+        }
+        var hi = lo
+        if j + 1 <= p.length and p[j] is 45 and p[j + 1] is not 93 {   # a-z
+            var h = p[j + 1]
+            var step = 2
+            if h is 92 {
+                if j + 2 > p.length {
+                    return _err(i, g, "this '[' is never closed")
+                }
+                h = _escape_char(p[j + 2])
+                step = 3
+                if h < 0 {
+                    return _err(j, g, "a range like a-z needs single characters at both ends")
+                }
+            }
+            hi = h
+            if hi < lo {
+                return _err(j, g, "the range is backwards (like z-a)")
+            }
+            j = j + step
+        }
+        items.add(0)
+        items.add(lo)
+        items.add(hi)
+    }
+    return _ok(_class_frag(items, negate), j + 1, g)
+}
+
+fn _escape_kind(e: int) -> int {                     # \d \w \s \D \W \S → class kind, otherwise 0
+    if e is 100 { return 1 }
+    if e is 119 { return 2 }
+    if e is 115 { return 3 }
+    if e is 68 { return 4 }
+    if e is 87 { return 5 }
+    if e is 83 { return 6 }
+    return 0
+}
+
+fn _escape_char(e: int) -> int {                     # the character \e stands for, or -1 if unknown
+    if e is 110 { return 10 }                         # \n
+    if e is 116 { return 9 }                          # \t
+    if e is 114 { return 13 }                         # \r
+    if e is 102 { return 12 }                         # \f
+    if e is 118 { return 11 }                         # \v
+    if (e >= 48 and e <= 57) or (e >= 65 and e <= 90) or (e >= 97 and e <= 122) {
+        return -1
+    }
+    return e                                          # \. \( \\ ... : the character itself
+}
+
+# ---------- building program pieces ----------
+fn _one(op: int, a: int, b: int) -> _Frag {
+    return _Frag(ops: [op], a: [a], b: [b])
+}
+
+fn _class_frag(items: [int], negate: bool) -> _Frag {
+    var op = _OP_CLASS
+    if negate {
+        op = _OP_NCLASS
+    }
+    return _Frag(ops: [op], a: [1], b: [items.length // 3], cls: items)
+}
+
+fn _join(x: _Frag, y: _Frag) -> _Frag {               # x, then y
+    var ops = x.ops
+    var a = x.a
+    var b = x.b
+    var cls = x.cls
+    var off = x.ops.length
+    var coff = x.cls.length
+    repeat i from 1 to y.ops.length {
+        var op = y.ops[i]
+        var ai = y.a[i]
+        var bi = y.b[i]
+        if op is _OP_JMP {
+            ai = ai + off
+        } else if op is _OP_SPLIT {
+            ai = ai + off
+            bi = bi + off
+        } else if op is _OP_CLASS or op is _OP_NCLASS {
+            ai = ai + coff
+        }
+        ops.add(op)
+        a.add(ai)
+        b.add(bi)
+    }
+    repeat i from 1 to y.cls.length {
+        cls.add(y.cls[i])
+    }
+    return _Frag(ops: ops, a: a, b: b, cls: cls)
+}
+
+fn _alt2(x: _Frag, y: _Frag) -> _Frag {               # x|y
+    var s = _one(_OP_SPLIT, 2, x.ops.length + 3)
+    var j = _one(_OP_JMP, y.ops.length + 2, 0)
+    return _join(_join(_join(s, x), j), y)
+}
+
+fn _star(x: _Frag, greedy: bool) -> _Frag {           # x*
+    var n = x.ops.length
+    var s = _one(_OP_SPLIT, 2, n + 3)
+    if not greedy {
+        s = _one(_OP_SPLIT, n + 3, 2)
+    }
+    return _join(_join(s, x), _one(_OP_JMP, 0 - n, 0))
+}
+
+fn _plus(x: _Frag, greedy: bool) -> _Frag {           # x+
+    var n = x.ops.length
+    var s = _one(_OP_SPLIT, 1 - n, 2)
+    if not greedy {
+        s = _one(_OP_SPLIT, 2, 1 - n)
+    }
+    return _join(x, s)
+}
+
+fn _quest(x: _Frag, greedy: bool) -> _Frag {          # x?
+    var n = x.ops.length
+    var s = _one(_OP_SPLIT, 2, n + 2)
+    if not greedy {
+        s = _one(_OP_SPLIT, n + 2, 2)
+    }
+    return _join(s, x)
+}
+
+fn _range(x: _Frag, lo: int, hi: int, greedy: bool) -> _Frag {   # x{lo,hi}
+    var f = _Frag()
+    repeat i from 1 to lo {
+        f = _join(f, x)
+    }
+    if hi is _INF {
+        f = _join(f, _star(x, greedy))
+    } else {
+        repeat i from lo + 1 to hi {
+            f = _join(f, _quest(x, greedy))
+        }
+    }
+    return f
+}

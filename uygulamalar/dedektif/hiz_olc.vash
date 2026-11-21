@@ -1,0 +1,38 @@
+# Taramanın hızını ölç:  vash run hiz_olc.vash C:\
+import fs
+import tarama
+
+var girdi = args()
+var kok = "C:\\"
+if girdi.length > 0 {
+    kok = girdi[1]
+}
+var ilerleme = channel[int]()
+var cekirdek = fs.cores()
+print("Taranıyor: {kok}  ({cekirdek} işçi)")
+var t = tarama.tara(kok, ilerleme, cekirdek)
+print("dosya: {t.dosya_sayisi}   klasör: {t.klasorler.length}   süre: {math_round(t.sure)} sn")
+print("toplam: {fs.size_text(t.klasorler[1].boyut)}")
+var c = tarama.cocuklari(t, 1)
+repeat i from 1 to c.length {
+    if i <= 8 {
+        print("  {fs.size_text(t.klasorler[c[i]].boyut)}\t{t.klasorler[c[i]].ad}")
+    }
+}
+print("en büyük dosyalar:")
+repeat i from 1 to t.buyukler.length {
+    if i <= 5 {
+        print("  {fs.size_text(t.buyukler[i].boyut)}\t{t.buyukler[i].yol}")
+    }
+}
+var unity = 0
+repeat i from 1 to t.klasorler.length {
+    if t.klasorler[i].unity {
+        unity = unity + 1
+        print("Unity projesi: {tarama.yolu(t.klasorler, i)}")
+    }
+}
+
+fn math_round(x: float) -> float {
+    return float(int(x * 10.0 + 0.5)) / 10.0
+}

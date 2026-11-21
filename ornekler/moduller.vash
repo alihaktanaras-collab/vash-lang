@@ -1,0 +1,22 @@
+# Modüller: kodu birden çok dosyaya bölmek
+# geometri.vash ve istatistik.vash bu dosyayla aynı klasörde.
+
+import geometri
+import istatistik
+
+# Başka dosyadaki her şey dosya adıyla kullanılır: neyin nereden geldiği hep görünür
+var bahce = geometri.Sekil.Dikdortgen(kose: geometri.Nokta(x: 0.0, y: 0.0), en: 12.0, boy: 8.0)
+var havuz = geometri.Sekil.Daire(merkez: geometri.Nokta(x: 6.0, y: 4.0), yaricap: 2.5)
+
+print("Bahçenin alanı:", geometri.alan(bahce), "m²   çevresi:", geometri.cevre(bahce), "m")
+print("Havuzun alanı: {geometri.alan(havuz)} m²")
+print("Çim kalan alan:", geometri.alan(bahce) - geometri.alan(havuz), "m²")
+print("Pi sayısı:", geometri.PI)
+
+var a = geometri.Nokta(x: 0.0, y: 0.0)
+var b = geometri.Nokta(x: 3.0, y: 4.0)
+print("İki nokta arası:", geometri.uzaklik(a, b))
+
+var notlar = [72.0, 85.0, 90.0, 64.0, 78.0]
+print("Not ortalaması:", istatistik.ortalama(notlar))
+print("Standart sapma:", istatistik.standart_sapma(notlar))

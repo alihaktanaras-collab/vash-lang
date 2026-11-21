@@ -1,0 +1,6 @@
+﻿# 2 milyar sayının toplamı (her turda biraz hesap) — tek çekirdek
+var t = 0
+repeat i from 1 to 2000000000 {
+    t = t + (i * 7) % 13
+}
+print(t)

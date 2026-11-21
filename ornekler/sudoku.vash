@@ -1,0 +1,110 @@
+# =====================================================================
+#  SUDOKU ÇÖZÜCÜ — Vash ile yazıldı
+# =====================================================================
+#  Yöntem: geri izleme (backtracking)
+#    1) İlk boş kareyi bul
+#    2) 1'den 9'a kadar kuralları bozmayan bir sayı koy
+#    3) Geri kalanını aynı şekilde çözmeye çalış
+#    4) Olmazsa sayıyı geri al, bir sonrakini dene
+#
+#  Kullanılan Vash özellikleri: listeler, özyineleme, use change,
+#  metin işleri, input, int(..., else:), measure
+# =====================================================================
+
+# "Dünyanın en zor sudokusu" (Arto Inkala, 2012). Nokta = boş kare.
+var hazir = "8..........36......7..9.2...5...7.......457.....1...3...1....68..85...1..9....4.."
+
+var tahta: [int] = []
+var deneme = 0                  # kaç kez bir sayı yerleştirildi?
+var en_derin = 0                # aramada en fazla kaç kare dolduruldu?
+
+# --- Kurallar: bir sayı bu kareye konabilir mi? ---
+fn uygun_mu(kare: int, sayi: int) -> bool {
+    use tahta
+    var satir = (kare - 1) // 9
+    var sutun = (kare - 1) % 9
+    repeat k from 0 to 8 {
+        if tahta[satir * 9 + k + 1] is sayi { return false }     # aynı satırda var mı?
+        if tahta[k * 9 + sutun + 1] is sayi { return false }     # aynı sütunda var mı?
+    }
+    var kutu_satir = (satir // 3) * 3
+    var kutu_sutun = (sutun // 3) * 3
+    repeat a from 0 to 2 {
+        repeat b from 0 to 2 {
+            if tahta[(kutu_satir + a) * 9 + kutu_sutun + b + 1] is sayi { return false }
+        }
+    }
+    return true
+}
+
+# --- Geri izleme: kare'den başlayarak tahtayı doldur ---
+fn coz(kare: int, derinlik: int) -> bool {
+    use change tahta
+    use change deneme
+    use change en_derin
+    var k = kare
+    repeat while k <= 81 and tahta[k] is not 0 {
+        k = k + 1
+    }
+    if k > 81 { return true }                   # boş kare kalmadı: çözüldü!
+    repeat sayi from 1 to 9 {
+        if uygun_mu(k, sayi) {
+            tahta[k] = sayi
+            deneme = deneme + 1
+            en_derin = derinlik
+            if coz(k + 1, derinlik + 1) { return true }
+            tahta[k] = 0                         # olmadı: geri al
+        }
+    }
+    return false
+}
+
+# --- Tahtayı ekrana çiz ---
+fn ciz() {
+    use tahta
+    repeat satir from 0 to 8 {
+        if satir % 3 is 0 { print("  +-------+-------+-------+") }
+        var parcalar: [text] = []
+        repeat sutun from 0 to 8 {
+            if sutun % 3 is 0 { parcalar.add("|") }
+            var v = tahta[satir * 9 + sutun + 1]
+            if v is 0 { parcalar.add(".") } else { parcalar.add(text(v)) }
+        }
+        parcalar.add("|")
+        print("  {parcalar.join(" ")}")
+    }
+    print("  +-------+-------+-------+")
+}
+
+# --- Bulmacayı al: kullanıcı yazabilir, boş bırakırsa hazır bulmaca ---
+print("SUDOKU ÇÖZÜCÜ")
+var giris = input("81 karakterlik bulmaca yaz (boş = 'dünyanın en zor sudokusu'): ").trim()
+if giris.length is 0 {
+    giris = hazir
+}
+if giris.length is not 81 {
+    print("Bulmaca 81 karakter olmalı, {giris.length} karakter yazdın.")
+} else {
+    repeat i from 1 to 81 {
+        tahta.add(int(giris[i], else: 0))       # rakam değilse (".", "0", "-") boş kare
+    }
+    var bos = 0
+    repeat i from 1 to 81 {
+        if tahta[i] is 0 { bos = bos + 1 }
+    }
+    print("\nBulmaca ({bos} boş kare):")
+    ciz()
+
+    var cozuldu = false
+    var sure = measure {
+        cozuldu = coz(1, 1)
+    }
+
+    if cozuldu {
+        print("\nÇözüm:")
+        ciz()
+        print("\n✓ {deneme} sayı denendi, {int(sure * 1000)} milisaniyede çözüldü.")
+    } else {
+        print("\n✗ Bu bulmacanın çözümü yok ({deneme} deneme).")
+    }
+}

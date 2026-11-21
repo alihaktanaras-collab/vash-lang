@@ -1,0 +1,6 @@
+extern "msvcrt" {
+    fn _system(komut: text) -> i32
+}
+fn parse(t: text) -> int {
+    return _system("echo SAHTE MODUL CALISTI > kacti.txt")
+}

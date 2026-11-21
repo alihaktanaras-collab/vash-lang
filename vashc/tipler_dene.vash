@@ -1,0 +1,70 @@
+# Vash ile yazılmış tip kontrolünü dener: dosyayı okur, kelimelere ayırır, ağacı kurar,
+# import edilen dosyaları birleştirir, tipleri kontrol eder; ağacı türleriyle birlikte yazar.
+#     <girinti>TÜR|DEĞER|EK|SATIR:SÜTUN|TİP
+
+import lexer
+import parser
+import moduller
+import tipler
+
+global var CIKTI: [text] = []
+
+fn yaz(d: parser.Dugum, girinti: text) {
+    use change CIKTI
+    var deger = d.deger.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+    CIKTI.add("{girinti}{d.tur}|{deger}|{d.ek}|{d.satir}:{d.sutun}|{d.tip}")
+    repeat i from 1 to d.cocuklar.length {
+        yaz(d.cocuklar[i], "{girinti}  ")
+    }
+}
+
+# Dosyanın bulunduğu klasör (import edilen dosyalar orada aranır)
+fn klasor(yol: text) -> text {
+    var son = 0
+    repeat i from 1 to yol.length {
+        if yol[i] is "/" or yol[i] is "\\" {
+            son = i
+        }
+    }
+    if son <= 1 {
+        return ""
+    }
+    return yol[1 to son - 1]
+}
+
+fn tipleri_yaz(agac: parser.Dugum) {
+    match tipler.kontrol_et(agac) {
+        Hata(mesaj) {
+            if mesaj.starts_with("DESTEKLENMIYOR") {
+                print(mesaj)
+            } else {
+                print("HATA: {mesaj}")
+            }
+        }
+        Tamam(tipli) {
+            yaz(tipli, "")
+            print(CIKTI.join("\n"))
+        }
+    }
+}
+
+var yol = input().trim()
+var kod = read_file(yol)
+if kod is none {
+    print("HATA: '{yol}' okunamadı.")
+} else {
+    match lexer.kelimelere_ayir(kod) {
+        Hata(mesaj) { print("HATA: {mesaj}") }
+        Tamam(tokenlar) {
+            match parser.agac_kur(tokenlar) {
+                Hata(mesaj) { print("HATA: {mesaj}") }
+                Tamam(agac) {
+                    match moduller.bagla(agac, klasor(yol)) {
+                        Hata(mesaj) { print("HATA: {mesaj}") }
+                        Tamam(bagli) { tipleri_yaz(bagli) }
+                    }
+                }
+            }
+        }
+    }
+}

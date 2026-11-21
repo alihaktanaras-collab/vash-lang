@@ -1,0 +1,727 @@
+# graphics: open a window and draw (Raylib underneath)
+#
+#   import graphics
+#   graphics.open_window(800, 600, "My game")
+#   repeat while graphics.is_open() {
+#       graphics.begin_drawing(graphics.DARK_BLUE)
+#       graphics.draw_circle(400.0, 300.0, 40.0, graphics.YELLOW)
+#       graphics.draw_text("Hello", 10, 10, 20, graphics.WHITE)
+#       graphics.end_drawing()
+#   }
+#   graphics.close_window()
+#
+# Raylib's own functions start with '_' (private to this file).
+# Every drawing function needs the 'screen' permission (the main program has every permission).
+
+extern "raylib" needs screen {
+    type Color {
+        r: u8
+        g: u8
+        b: u8
+        a: u8 = 255
+    }
+    type Vector2 {
+        x: f32
+        y: f32
+    }
+    type Rect {
+        x: f32
+        y: f32
+        width: f32
+        height: f32
+    }
+    fn _InitWindow(width: i32, height: i32, title: text)
+    fn _CloseWindow()
+    fn _WindowShouldClose() -> u8
+    fn _SetTargetFPS(fps: i32)
+    fn _SetTraceLogLevel(level: i32)
+    fn _BeginDrawing()
+    fn _EndDrawing()
+    fn _ClearBackground(color: Color)
+    fn _DrawCircleV(center: Vector2, radius: f32, color: Color)
+    fn _DrawRectangleRec(r: Rect, color: Color)
+    fn _DrawText(content: text, x: i32, y: i32, size: i32, color: Color)
+    fn _MeasureText(content: text, size: i32) -> i32
+    fn _GetFrameTime() -> f32
+    fn _GetFPS() -> i32
+    fn _TakeScreenshot(file: text)
+    fn _GetMousePosition() -> Vector2
+    fn _IsKeyDown(key: i32) -> u8
+    fn _IsMouseButtonDown(button: i32) -> u8
+
+    # --- images (textures) ---
+    type Texture {
+        id: i32
+        width: i32
+        height: i32
+        mipmaps: i32
+        format: i32
+    }
+    # --- fonts: C's Font with its Texture written out flat ---
+    type Font {
+        base_size: i32
+        glyph_count: i32
+        glyph_padding: i32
+        tex_id: i32
+        tex_width: i32
+        tex_height: i32
+        tex_mipmaps: i32
+        tex_format: i32
+        recs: ptr
+        glyphs: ptr
+    }
+    # --- sound: C's Sound / Music with AudioStream written out flat ---
+    type Sound {
+        buffer: ptr
+        processor: ptr
+        sample_rate: i32
+        sample_size: i32
+        channels: i32
+        padding: i32
+        frame_count: i32
+    }
+    type Music {
+        buffer: ptr
+        processor: ptr
+        sample_rate: i32
+        sample_size: i32
+        channels: i32
+        padding: i32
+        frame_count: i32
+        looping: u8
+        ctx_type: i32
+        ctx_data: ptr
+    }
+    type Camera2D {
+        offset_x: f32
+        offset_y: f32
+        target_x: f32
+        target_y: f32
+        rotation: f32
+        zoom: f32
+    }
+
+    fn _SetConfigFlags(flags: i32)
+    fn _GetScreenWidth() -> i32
+    fn _GetScreenHeight() -> i32
+    fn _SetWindowMinSize(width: i32, height: i32)
+    fn _SetWindowTitle(title: text)
+    fn _MaximizeWindow()
+    fn _SetExitKey(key: i32)
+    fn _GetTime() -> float
+
+    fn _DrawLineEx(a: Vector2, b: Vector2, thick: f32, color: Color)
+    fn _DrawTriangle(a: Vector2, b: Vector2, c: Vector2, color: Color)
+    fn _DrawCircleLines(x: i32, y: i32, radius: f32, color: Color)
+    fn _DrawRectangleLinesEx(r: Rect, thick: f32, color: Color)
+    fn _DrawRectangleRounded(r: Rect, roundness: f32, segments: i32, color: Color)
+    fn _DrawRectangleRoundedLinesEx(r: Rect, roundness: f32, segments: i32, thick: f32, color: Color)
+    fn _DrawRectangleGradientV(x: i32, y: i32, width: i32, height: i32, top: Color, bottom: Color)
+    fn _BeginScissorMode(x: i32, y: i32, width: i32, height: i32)
+    fn _EndScissorMode()
+
+    fn _LoadTexture(file: text) -> Texture
+    fn _IsTextureValid(t: Texture) -> u8
+    fn _UnloadTexture(t: Texture)
+    fn _SetTextureFilter(t: Texture, filter: i32)
+    fn _DrawTexturePro(t: Texture, source: Rect, dest: Rect, origin: Vector2, rotation: f32, tint: Color)
+
+    fn _LoadCodepoints(content: text, count: bytes) -> ptr
+    fn _UnloadCodepoints(codepoints: ptr)
+    fn _LoadFontEx(file: text, size: i32, codepoints: ptr, count: i32) -> Font
+    fn _IsFontValid(f: Font) -> u8
+    fn _UnloadFont(f: Font)
+    fn _GetFontDefault() -> Font
+    fn _DrawTextEx(f: Font, content: text, position: Vector2, size: f32, spacing: f32, color: Color)
+    fn _MeasureTextEx(f: Font, content: text, size: f32, spacing: f32) -> Vector2
+
+
+    fn _BeginMode2D(c: Camera2D)
+    fn _EndMode2D()
+    fn _GetScreenToWorld2D(p: Vector2, c: Camera2D) -> Vector2
+    fn _GetWorldToScreen2D(p: Vector2, c: Camera2D) -> Vector2
+
+    fn _IsKeyPressed(key: i32) -> u8
+    fn _IsKeyPressedRepeat(key: i32) -> u8
+    fn _IsKeyReleased(key: i32) -> u8
+    fn _GetCharPressed() -> i32
+    fn _IsMouseButtonPressed(button: i32) -> u8
+    fn _IsMouseButtonReleased(button: i32) -> u8
+    fn _GetMouseWheelMove() -> f32
+    fn _GetMouseDelta() -> Vector2
+    fn _SetMouseCursor(cursor: i32)
+}
+
+# Sound functions need the 'sound' permission
+extern "raylib" needs sound {
+    fn _InitAudioDevice()
+    fn _CloseAudioDevice()
+    fn _IsAudioDeviceReady() -> u8
+    fn _LoadSound(file: text) -> Sound
+    fn _IsSoundValid(s: Sound) -> u8
+    fn _UnloadSound(s: Sound)
+    fn _PlaySound(s: Sound)
+    fn _StopSound(s: Sound)
+    fn _IsSoundPlaying(s: Sound) -> u8
+    fn _SetSoundVolume(s: Sound, volume: f32)
+    fn _LoadMusicStream(file: text) -> Music
+    fn _IsMusicValid(m: Music) -> u8
+    fn _UnloadMusicStream(m: Music)
+    fn _PlayMusicStream(m: Music)
+    fn _StopMusicStream(m: Music)
+    fn _UpdateMusicStream(m: Music)
+    fn _IsMusicStreamPlaying(m: Music) -> u8
+    fn _SetMusicVolume(m: Music, volume: f32)
+}
+
+# Windows libraries Raylib needs
+extern "opengl32" {
+}
+extern "gdi32" {
+}
+extern "winmm" {
+}
+
+# ---------- Colors ----------
+global var BLACK = Color(r: 0, g: 0, b: 0)
+global var WHITE = Color(r: 255, g: 255, b: 255)
+global var GRAY = Color(r: 130, g: 130, b: 130)
+global var RED = Color(r: 230, g: 41, b: 55)
+global var GREEN = Color(r: 0, g: 228, b: 48)
+global var BLUE = Color(r: 0, g: 121, b: 241)
+global var YELLOW = Color(r: 253, g: 249, b: 0)
+global var ORANGE = Color(r: 255, g: 161, b: 0)
+global var PURPLE = Color(r: 200, g: 122, b: 255)
+global var DARK_BLUE = Color(r: 20, g: 24, b: 46)
+
+# ---------- Keys ----------
+global var KEY_RIGHT = 262
+global var KEY_LEFT = 263
+global var KEY_DOWN = 264
+global var KEY_UP = 265
+global var KEY_SPACE = 32
+global var KEY_ENTER = 257
+global var KEY_ESCAPE = 256
+global var KEY_BACKSPACE = 259
+global var KEY_TAB = 258
+global var KEY_DELETE = 261
+global var KEY_HOME = 268
+global var KEY_END = 269
+global var KEY_SHIFT = 340
+global var KEY_CONTROL = 341
+global var KEY_ALT = 342
+global var KEY_F1 = 290
+global var KEY_A = 65                          # letters: KEY_A + 0..25 (KEY_A + 3 is D)
+global var KEY_W = 87
+global var KEY_S = 83
+global var KEY_D = 68
+global var KEY_0 = 48                          # digits: KEY_0 + 0..9
+
+# ---------- Mouse buttons and cursors ----------
+global var MOUSE_LEFT = 0
+global var MOUSE_RIGHT = 1
+global var MOUSE_MIDDLE = 2
+global var CURSOR_DEFAULT = 0
+global var CURSOR_TEXT = 2
+global var CURSOR_HAND = 4
+global var CURSOR_RESIZE_LEFT_RIGHT = 5
+global var CURSOR_RESIZE_UP_DOWN = 6
+global var CURSOR_MOVE = 9
+
+# Every letter Turkish and English text needs (load_font loads these)
+global var FONT_LETTERS = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz\{|\}~çğıöşüÇĞİÖŞÜâîûÂÎÛéèäàß€₺°·•–—…‘’“”«»×÷±²³½¼←→↑↓✓✗"
+
+# ---------- Window ----------
+fn open_window(width: int, height: int, title: text) {
+    use screen
+    _SetTraceLogLevel(5)                      # hide Raylib's messages (errors only)
+    _InitWindow(width, height, title)
+    _SetTargetFPS(60)
+}
+
+fn is_open() -> bool {                        # false once the user closes the window (Esc or the close button)
+    use screen
+    return _WindowShouldClose() is 0
+}
+
+fn close_window() {
+    use screen
+    _CloseWindow()
+}
+
+# ---------- Drawing (every frame: begin_drawing ... end_drawing) ----------
+fn begin_drawing(background: Color) {
+    use screen
+    _BeginDrawing()
+    _ClearBackground(background)
+}
+
+fn end_drawing() {
+    use screen
+    _EndDrawing()
+}
+
+fn draw_circle(x: float, y: float, radius: float, color: Color) {
+    use screen
+    _DrawCircleV(Vector2(x: x, y: y), radius, color)
+}
+
+fn draw_rectangle(x: float, y: float, width: float, height: float, color: Color) {
+    use screen
+    _DrawRectangleRec(Rect(x: x, y: y, width: width, height: height), color)
+}
+
+fn draw_text(content: text, x: int, y: int, size: int, color: Color) {
+    use screen
+    _DrawText(content, x, y, size, color)
+}
+
+fn text_width(content: text, size: int) -> int {
+    use screen
+    return _MeasureText(content, size)
+}
+
+# ---------- Time, input ----------
+fn frame_time() -> float {                    # seconds the last frame took: multiply movement by this
+    use screen
+    return _GetFrameTime()
+}
+
+fn fps() -> int {
+    use screen
+    return _GetFPS()
+}
+
+fn key_down(key: int) -> bool {
+    use screen
+    return _IsKeyDown(key) is not 0
+}
+
+fn mouse_position() -> Vector2 {
+    use screen
+    return _GetMousePosition()
+}
+
+fn mouse_down() -> bool {
+    use screen
+    return _IsMouseButtonDown(0) is not 0
+}
+
+fn screenshot(file: text) {
+    use screen
+    _TakeScreenshot(file)
+}
+
+fn elapsed() -> float {                          # seconds since the window opened
+    use screen
+    return _GetTime()
+}
+
+# ---------- Window (more) ----------
+# A window the user can resize and maximize; smooth edges, no tearing
+fn open_resizable_window(width: int, height: int, title: text) {
+    use screen
+    _SetTraceLogLevel(5)
+    _SetConfigFlags(4 | 32 | 64)              # resizable | 4x antialias | vsync
+    _InitWindow(width, height, title)
+    _SetTargetFPS(60)
+}
+
+fn screen_width() -> int {
+    use screen
+    return _GetScreenWidth()
+}
+
+fn screen_height() -> int {
+    use screen
+    return _GetScreenHeight()
+}
+
+fn set_min_size(width: int, height: int) {
+    use screen
+    _SetWindowMinSize(width, height)
+}
+
+fn set_title(title: text) {
+    use screen
+    _SetWindowTitle(title)
+}
+
+fn maximize_window() {
+    use screen
+    _MaximizeWindow()
+}
+
+fn set_exit_key(key: int) {                   # 0: Esc no longer closes the window
+    use screen
+    _SetExitKey(key)
+}
+
+fn set_fps(fps: int) {
+    use screen
+    _SetTargetFPS(fps)
+}
+
+# ---------- Colors (more) ----------
+fn rgb(r: int, g: int, b: int) -> Color {
+    return Color(r: r, g: g, b: b)
+}
+
+fn rgba(r: int, g: int, b: int, a: int) -> Color {
+    return Color(r: r, g: g, b: b, a: a)
+}
+
+# Same color, see-through by 'opacity' (0.0 invisible .. 1.0 solid)
+fn fade(c: Color, opacity: float) -> Color {
+    var a = int(opacity * 255.0)
+    if a < 0 {
+        a = 0
+    }
+    if a > 255 {
+        a = 255
+    }
+    return Color(r: c.r, g: c.g, b: c.b, a: a)
+}
+
+# ---------- Shapes (more) ----------
+fn draw_line(x1: float, y1: float, x2: float, y2: float, thickness: float, color: Color) {
+    use screen
+    _DrawLineEx(Vector2(x: x1, y: y1), Vector2(x: x2, y: y2), thickness, color)
+}
+
+# Corners in any order
+fn draw_triangle(x1: float, y1: float, x2: float, y2: float, x3: float, y3: float, color: Color) {
+    use screen
+    var a = Vector2(x: x1, y: y1)
+    var b = Vector2(x: x2, y: y2)
+    var c = Vector2(x: x3, y: y3)
+    if (x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1) < 0.0 {
+        _DrawTriangle(a, b, c, color)
+    } else {
+        _DrawTriangle(a, c, b, color)
+    }
+}
+
+fn draw_circle_outline(x: float, y: float, radius: float, color: Color) {
+    use screen
+    _DrawCircleLines(int(x), int(y), radius, color)
+}
+
+fn draw_rectangle_outline(x: float, y: float, width: float, height: float, thickness: float, color: Color) {
+    use screen
+    _DrawRectangleLinesEx(Rect(x: x, y: y, width: width, height: height), thickness, color)
+}
+
+fn _yuvarlaklik(width: float, height: float, radius: float) -> float {
+    var kisa = width
+    if height < kisa {
+        kisa = height
+    }
+    if kisa <= 0.0 {
+        return 0.0
+    }
+    var r = radius * 2.0 / kisa
+    if r > 1.0 {
+        return 1.0
+    }
+    return r
+}
+
+# Rectangle with rounded corners ('radius' in pixels)
+fn draw_rounded(x: float, y: float, width: float, height: float, radius: float, color: Color) {
+    use screen
+    _DrawRectangleRounded(Rect(x: x, y: y, width: width, height: height), _yuvarlaklik(width, height, radius), 8, color)
+}
+
+fn draw_rounded_outline(x: float, y: float, width: float, height: float, radius: float, thickness: float, color: Color) {
+    use screen
+    _DrawRectangleRoundedLinesEx(Rect(x: x, y: y, width: width, height: height), _yuvarlaklik(width, height, radius), 8, thickness, color)
+}
+
+# Color changes from 'top' to 'bottom'
+fn draw_gradient(x: float, y: float, width: float, height: float, top: Color, bottom: Color) {
+    use screen
+    _DrawRectangleGradientV(int(x), int(y), int(width), int(height), top, bottom)
+}
+
+# Only the area inside the box is drawn until clip_end()
+fn clip_begin(x: float, y: float, width: float, height: float) {
+    use screen
+    _BeginScissorMode(int(x), int(y), int(width), int(height))
+}
+
+fn clip_end() {
+    use screen
+    _EndScissorMode()
+}
+
+# ---------- Images ----------
+# PNG, BMP, JPG, TGA, GIF, QOI; check with texture_ok
+fn load_texture(file: text) -> Texture {
+    use screen
+    return _LoadTexture(file)
+}
+
+fn texture_ok(t: Texture) -> bool {
+    use screen
+    return _IsTextureValid(t) is not 0
+}
+
+fn unload_texture(t: Texture) {
+    use screen
+    _UnloadTexture(t)
+}
+
+# true: smooth when scaled; false: sharp pixels (pixel art)
+fn set_smooth(t: Texture, smooth: bool) {
+    use screen
+    if smooth {
+        _SetTextureFilter(t, 1)
+    } else {
+        _SetTextureFilter(t, 0)
+    }
+}
+
+# Whole image at x, y in its own size
+fn draw_texture(t: Texture, x: float, y: float) {
+    use screen
+    var w = float(t.width)
+    var h = float(t.height)
+    _DrawTexturePro(t, Rect(x: 0.0, y: 0.0, width: w, height: h), Rect(x: x, y: y, width: w, height: h), Vector2(x: 0.0, y: 0.0), 0.0, WHITE)
+}
+
+# Part of an image (sx, sy, sw, sh) into the box x, y, width, height.
+# angle: degrees, turns around the box's center; flip: mirror left-right; tint: WHITE keeps colors
+fn draw_sprite(t: Texture, sx: float, sy: float, sw: float, sh: float, x: float, y: float, width: float, height: float, angle: float, flip: bool, tint: Color) {
+    use screen
+    var kaynak_genislik = sw
+    if flip {
+        kaynak_genislik = -sw
+    }
+    var kaynak = Rect(x: sx, y: sy, width: kaynak_genislik, height: sh)
+    var hedef = Rect(x: x + width / 2.0, y: y + height / 2.0, width: width, height: height)
+    _DrawTexturePro(t, kaynak, hedef, Vector2(x: width / 2.0, y: height / 2.0), angle, tint)
+}
+
+# ---------- Fonts ----------
+# Loads a .ttf/.otf with Turkish letters. size: the pixel size it looks sharpest at
+fn load_font(file: text, size: int) -> Font {
+    use screen
+    return load_font_letters(file, size, FONT_LETTERS)
+}
+
+# Same, but only with the letters (or icon characters) in 'letters'
+fn load_font_letters(file: text, size: int, letters: text) -> Font {
+    use screen
+    var sayi = bytes(4)
+    var harfler = _LoadCodepoints(letters, sayi)
+    var f = _LoadFontEx(file, size, harfler, sayi.get_int(1, 4))
+    _UnloadCodepoints(harfler)
+    _SetTextureFilter(_font_resmi(f), 1)
+    return f
+}
+
+fn _font_resmi(f: Font) -> Texture {
+    return Texture(id: f.tex_id, width: f.tex_width, height: f.tex_height, mipmaps: f.tex_mipmaps, format: f.tex_format)
+}
+
+fn font_ok(f: Font) -> bool {
+    use screen
+    return _IsFontValid(f) is not 0
+}
+
+fn unload_font(f: Font) {
+    use screen
+    _UnloadFont(f)
+}
+
+fn default_font() -> Font {
+    use screen
+    return _GetFontDefault()
+}
+
+fn draw_text_font(f: Font, content: text, x: float, y: float, size: float, color: Color) {
+    use screen
+    _DrawTextEx(f, content, Vector2(x: x, y: y), size, 0.0, color)
+}
+
+fn text_width_font(f: Font, content: text, size: float) -> float {
+    use screen
+    var olcu = _MeasureTextEx(f, content, size, 0.0)
+    return olcu.x
+}
+
+# ---------- Sound ----------
+fn open_audio() {                             # once, before loading sounds
+    use sound
+    _InitAudioDevice()
+}
+
+fn close_audio() {
+    use sound
+    _CloseAudioDevice()
+}
+
+fn audio_ok() -> bool {
+    use sound
+    return _IsAudioDeviceReady() is not 0
+}
+
+# Short sounds (WAV, OGG, MP3, FLAC); check with sound_ok
+fn load_sound(file: text) -> Sound {
+    use sound
+    return _LoadSound(file)
+}
+
+fn sound_ok(s: Sound) -> bool {
+    use sound
+    return _IsSoundValid(s) is not 0
+}
+
+fn unload_sound(s: Sound) {
+    use sound
+    _UnloadSound(s)
+}
+
+fn play_sound(s: Sound) {
+    use sound
+    _PlaySound(s)
+}
+
+fn stop_sound(s: Sound) {
+    use sound
+    _StopSound(s)
+}
+
+fn sound_playing(s: Sound) -> bool {
+    use sound
+    return _IsSoundPlaying(s) is not 0
+}
+
+fn set_sound_volume(s: Sound, volume: float) {   # 0.0 .. 1.0
+    use sound
+    _SetSoundVolume(s, volume)
+}
+
+# Long music, read bit by bit: call update_music(m) every frame
+fn load_music(file: text) -> Music {
+    use sound
+    return _LoadMusicStream(file)
+}
+
+fn music_ok(m: Music) -> bool {
+    use sound
+    return _IsMusicValid(m) is not 0
+}
+
+fn unload_music(m: Music) {
+    use sound
+    _UnloadMusicStream(m)
+}
+
+fn play_music(m: Music) {
+    use sound
+    _PlayMusicStream(m)
+}
+
+fn stop_music(m: Music) {
+    use sound
+    _StopMusicStream(m)
+}
+
+fn update_music(m: Music) {
+    use sound
+    _UpdateMusicStream(m)
+}
+
+fn music_playing(m: Music) -> bool {
+    use sound
+    return _IsMusicStreamPlaying(m) is not 0
+}
+
+fn set_music_volume(m: Music, volume: float) {
+    use sound
+    _SetMusicVolume(m, volume)
+}
+
+# ---------- Camera ----------
+# target: the world point shown at the screen point 'offset'; zoom 1.0 is normal size
+fn camera(offset_x: float, offset_y: float, target_x: float, target_y: float, zoom: float) -> Camera2D {
+    return Camera2D(offset_x: offset_x, offset_y: offset_y, target_x: target_x, target_y: target_y, rotation: 0.0, zoom: zoom)
+}
+
+fn camera_begin(c: Camera2D) {               # drawing after this uses world positions
+    use screen
+    _BeginMode2D(c)
+}
+
+fn camera_end() {
+    use screen
+    _EndMode2D()
+}
+
+fn screen_to_world(x: float, y: float, c: Camera2D) -> Vector2 {
+    use screen
+    return _GetScreenToWorld2D(Vector2(x: x, y: y), c)
+}
+
+fn world_to_screen(x: float, y: float, c: Camera2D) -> Vector2 {
+    use screen
+    return _GetWorldToScreen2D(Vector2(x: x, y: y), c)
+}
+
+# ---------- Input (more) ----------
+fn key_pressed(key: int) -> bool {            # true only in the frame the key went down
+    use screen
+    return _IsKeyPressed(key) is not 0
+}
+
+fn key_repeated(key: int) -> bool {           # true again while held (for text boxes)
+    use screen
+    return _IsKeyPressedRepeat(key) is not 0
+}
+
+fn key_released(key: int) -> bool {
+    use screen
+    return _IsKeyReleased(key) is not 0
+}
+
+# Next typed character as text ("" when none are left this frame)
+fn typed_char() -> text {
+    use screen
+    var c = _GetCharPressed()
+    if c is 0 {
+        return ""
+    }
+    return char(c)
+}
+
+fn mouse_button_down(button: int) -> bool {
+    use screen
+    return _IsMouseButtonDown(button) is not 0
+}
+
+fn mouse_pressed(button: int) -> bool {
+    use screen
+    return _IsMouseButtonPressed(button) is not 0
+}
+
+fn mouse_released(button: int) -> bool {
+    use screen
+    return _IsMouseButtonReleased(button) is not 0
+}
+
+fn mouse_wheel() -> float {                   # + up, - down
+    use screen
+    return _GetMouseWheelMove()
+}
+
+fn mouse_moved() -> Vector2 {                 # how far the mouse moved since the last frame
+    use screen
+    return _GetMouseDelta()
+}
+
+fn set_cursor(cursor: int) {
+    use screen
+    _SetMouseCursor(cursor)
+}

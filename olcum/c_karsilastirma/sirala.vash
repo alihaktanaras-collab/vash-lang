@@ -1,0 +1,14 @@
+﻿# 5 milyon sayıyı üret, sırala, toplamını al
+var n = 5000000
+var l: [int] = []
+var x = 12345
+repeat n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    l.add(x)
+}
+l.sort()
+var s = 0
+repeat i from 1 to n step 1000 {
+    s = s + l[i] % 1000
+}
+print(s)

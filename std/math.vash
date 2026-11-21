@@ -1,0 +1,184 @@
+# math: matematik işleri ve 2B vektörler
+#
+#   import math
+#   print(math.sqrt(2.0), math.sin(math.PI / 2.0), math.clamp(15.0, 0.0, 10.0))
+#   var hiz = math.vec2(3.0, 4.0)
+#   print(hiz.length(), hiz.normalized(), hiz.add(math.vec2(1.0, 0.0)))
+
+extern "msvcrt" {
+    fn _sin(x: float) -> float
+    fn _cos(x: float) -> float
+    fn _tan(x: float) -> float
+    fn _asin(x: float) -> float
+    fn _acos(x: float) -> float
+    fn _atan(x: float) -> float
+    fn _atan2(y: float, x: float) -> float
+    fn _sqrt(x: float) -> float
+    fn _pow(x: float, y: float) -> float
+    fn _exp(x: float) -> float
+    fn _log(x: float) -> float
+    fn _log10(x: float) -> float
+    fn _floor(x: float) -> float
+    fn _ceil(x: float) -> float
+    fn _fmod(x: float, y: float) -> float
+}
+
+global var PI = 3.141592653589793
+global var TAU = 6.283185307179586
+global var E = 2.718281828459045
+
+fn sin(x: float) -> float { return _sin(x) }
+fn cos(x: float) -> float { return _cos(x) }
+fn tan(x: float) -> float { return _tan(x) }
+fn asin(x: float) -> float { return _asin(x) }
+fn acos(x: float) -> float { return _acos(x) }
+fn atan(x: float) -> float { return _atan(x) }
+fn atan2(y: float, x: float) -> float { return _atan2(y, x) }
+fn sqrt(x: float) -> float { return _sqrt(x) }
+fn pow(x: float, y: float) -> float { return _pow(x, y) }
+fn exp(x: float) -> float { return _exp(x) }
+fn log(x: float) -> float { return _log(x) }
+fn log10(x: float) -> float { return _log10(x) }
+fn floor(x: float) -> float { return _floor(x) }
+fn ceil(x: float) -> float { return _ceil(x) }
+fn fmod(x: float, y: float) -> float { return _fmod(x, y) }
+
+# En yakın tam sayıya (0.5 yukarı)
+fn round(x: float) -> float {
+    return _floor(x + 0.5)
+}
+
+fn abs(x: float) -> float {
+    if x < 0.0 {
+        return -x
+    }
+    return x
+}
+
+fn abs_int(x: int) -> int {
+    if x < 0 {
+        return -x
+    }
+    return x
+}
+
+fn min(a: float, b: float) -> float {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn max(a: float, b: float) -> float {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn min_int(a: int, b: int) -> int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn max_int(a: int, b: int) -> int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+# x'i [alt, ust] aralığına sıkıştır
+fn clamp(x: float, alt: float, ust: float) -> float {
+    if x < alt {
+        return alt
+    }
+    if x > ust {
+        return ust
+    }
+    return x
+}
+
+fn clamp_int(x: int, alt: int, ust: int) -> int {
+    if x < alt {
+        return alt
+    }
+    if x > ust {
+        return ust
+    }
+    return x
+}
+
+# a'dan b'ye t oranında (0: a, 1: b)
+fn lerp(a: float, b: float, t: float) -> float {
+    return a + (b - a) * t
+}
+
+fn sign(x: float) -> float {
+    if x > 0.0 {
+        return 1.0
+    }
+    if x < 0.0 {
+        return -1.0
+    }
+    return 0.0
+}
+
+fn radians(derece: float) -> float {
+    return derece * PI / 180.0
+}
+
+fn degrees(radyan: float) -> float {
+    return radyan * 180.0 / PI
+}
+
+# ---------- 2B vektör ----------
+type Vec2 {
+    x: float
+    y: float
+
+    fn add(b: Vec2) -> Vec2 { return Vec2(x: x + b.x, y: y + b.y) }
+    fn sub(b: Vec2) -> Vec2 { return Vec2(x: x - b.x, y: y - b.y) }
+    fn scale(k: float) -> Vec2 { return Vec2(x: x * k, y: y * k) }
+    fn dot(b: Vec2) -> float { return x * b.x + y * b.y }
+    fn cross(b: Vec2) -> float { return x * b.y - y * b.x }
+    fn length() -> float { return _sqrt(x * x + y * y) }
+    fn length_sq() -> float { return x * x + y * y }
+    fn distance(b: Vec2) -> float {
+        var dx = x - b.x
+        var dy = y - b.y
+        return _sqrt(dx * dx + dy * dy)
+    }
+    fn angle() -> float { return _atan2(y, x) }
+
+    # Boyu 1 olan aynı yönlü vektör (sıfır vektör olduğu gibi döner)
+    fn normalized() -> Vec2 {
+        var u = _sqrt(x * x + y * y)
+        if u is 0.0 {
+            return Vec2(x: 0.0, y: 0.0)
+        }
+        return Vec2(x: x / u, y: y / u)
+    }
+
+    # Açı (radyan) kadar döndür
+    fn rotated(aci: float) -> Vec2 {
+        var c = _cos(aci)
+        var s = _sin(aci)
+        return Vec2(x: x * c - y * s, y: x * s + y * c)
+    }
+
+    fn lerp_to(b: Vec2, t: float) -> Vec2 {
+        return Vec2(x: x + (b.x - x) * t, y: y + (b.y - y) * t)
+    }
+}
+
+fn vec2(x: float, y: float) -> Vec2 {
+    return Vec2(x: x, y: y)
+}
+
+# Açıdan (radyan) birim vektör
+fn from_angle(aci: float) -> Vec2 {
+    return Vec2(x: _cos(aci), y: _sin(aci))
+}

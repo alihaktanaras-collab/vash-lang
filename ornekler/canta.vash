@@ -1,0 +1,53 @@
+enum Esya {
+    Kilic(ad: text, hasar: int)
+    Iksir(ad: text, iyilestirme: int)
+    Anahtar
+}
+
+# 2. Oyunun ortak durumu (Sözlük ve değişkenler)
+var can = 80
+var canta: {text: Esya} = {
+    "silah": Esya.Kilic(ad: "Ejderha Kılıcı", hasar: 45),
+    "ikram": Esya.Iksir(ad: "Can İksiri", iyilestirme: 30)
+}
+
+# 3. Yok olabilen değer (T?) döndüren güvenli arama fonksiyonu
+fn esya_bul(anahtar_adi: text) -> Esya? {
+    use canta
+    if canta.has(anahtar_adi) {
+        return canta[anahtar_adi]
+    }
+    return none
+}
+
+# 4. Yan etki kontrollü (use change) eşya kullanma fonksiyonu
+fn esya_kullan(anahtar_adi: text) {
+    use change can
+    var bulunan = esya_bul(anahtar_adi)
+
+    # Null güvenliği: Kontrol etmeden 'bulunan' kullanılamaz
+    if bulunan is none {
+        print("Çantada '{anahtar_adi}' bulunamadı!")
+        return
+    }
+
+    # Kapsamlı match: Tüm eşya çeşitlerini güvenli şekilde ayırır
+    match bulunan {
+        Kilic(ad, hasar) {
+            print("{ad} savruldu! Düşmana {hasar} hasar verildi.")
+        }
+        Iksir(ad, iyilestirme) {
+            can = can + iyilestirme
+            print("{ad} içildi! Yeni can: {can}")
+        }
+        Anahtar {
+            print("Kilitli kapı açıldı!")
+        }
+    }
+}
+
+# --- Programın Çalışması ---
+print("Başlangıç canı: {can}")
+esya_kullan("silah")
+esya_kullan("ikram")
+esya_kullan("kalkan")

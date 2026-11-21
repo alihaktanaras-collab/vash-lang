@@ -1,0 +1,73 @@
+# when — şart doğru olduğu AN çalışır (Vash'a özgü)
+
+var can = 100
+var altin = 0
+var olum_sayisi = 0
+
+# --- Oyunun kuralları: tek yerde yazılır ---
+when can <= 0 {
+    olum_sayisi = olum_sayisi + 1
+    print("  💀 Öldün! ({olum_sayisi}. kez) Yeniden doğuyorsun...")
+    can = 100                    # izlediği değişkeni değiştirebilir
+}
+
+when altin >= 100 {
+    print("  ⭐ Seviye atladın!")
+}
+
+# --- Oyun kodu: kuralları hiç düşünmeden yazılır ---
+fn hasar_al(n: int) {
+    use change can
+    can = can - n                # when burada da çalışır
+    print("Hasar: {n}, kalan can: {can}")
+}
+
+fn altin_topla(n: int) {
+    use change altin
+    altin = altin + n
+}
+
+hasar_al(30)
+hasar_al(50)
+hasar_al(40)                     # → ölür, yeniden doğar
+altin_topla(60)
+altin_topla(50)                  # → seviye atlar (110)
+altin_topla(20)                  # → yine 100'ün üstünde: tekrar çalışmaz
+altin = 0
+altin_topla(100)                 # → yanlıştan doğruya döndü: tekrar çalışır
+hasar_al(100)                    # → tekrar ölür
+
+# --- Hemen çalışan ve bekleyen when ---
+print("--- later")
+var kapi_acik = true
+when kapi_acik {
+    print("  A) kapı açık (hemen çalıştı)")
+}
+when later kapi_acik {
+    print("  B) kapı açıldı (değişimi bekledi)")
+}
+kapi_acik = false
+kapi_acik = true                 # A ve B ikisi de çalışır
+
+# --- Listeleri izlemek ---
+print("--- liste")
+var envanter: [text] = []
+when envanter.length >= 3 {
+    print("  🎒 Çanta doldu:", envanter)
+}
+envanter.add("kılıç")
+envanter.add("kalkan")
+envanter.add("iksir")            # → çanta doldu
+
+# --- Fonksiyon içinde when (fonksiyon bitince biter) ---
+print("--- fonksiyon içinde")
+fn savas(dusman_can: int) {
+    when dusman_can <= 0 {
+        print("  🏆 Düşman yenildi!")
+    }
+    repeat while dusman_can > 0 {
+        dusman_can = dusman_can - 30
+        print("  Vurdun, düşmanın canı: {dusman_can}")
+    }
+}
+savas(70)

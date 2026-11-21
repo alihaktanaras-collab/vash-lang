@@ -1,0 +1,1094 @@
+# Vash Dedektif: diskinde yeri ne kaplıyor, kopyalar, Unity projelerinin röntgeni.
+#   vash run dedektif.vash
+#   vash run dedektif.vash --kok "C:\Users\Ali" --ekran resim.png [--sekme unity] [--proje yol]   (tarayıp ekran görüntüsü alır)
+import graphics
+import arayuz
+import fs
+import math
+import tarama
+import unity
+
+global var UST = 56.0
+global var RENKLER = ["#4c8dff", "#36b3a0", "#8b6cf0", "#e0884f", "#d4537e", "#5fa5ee", "#6cc47a", "#c9a13a", "#4fb0d8", "#b06ad6"]
+
+fn renk(h: text) -> graphics.Color {
+    var s = h[2 to h.length]
+    var d = "0123456789abcdef"
+    var r: [int] = []
+    repeat i from 1 to 3 {
+        var a = 0
+        var b = 0
+        repeat k from 1 to 16 {
+            if d[k] is s[i * 2 - 1] {
+                a = k - 1
+            }
+            if d[k] is s[i * 2] {
+                b = k - 1
+            }
+        }
+        r.add(a * 16 + b)
+    }
+    return graphics.rgb(r[1], r[2], r[3])
+}
+
+fn sayi(n: int) -> text {
+    var t = text(n)
+    var parcalar: [text] = []
+    var i = t.length
+    repeat while i > 0 {
+        var bas = math.max_int(1, i - 2)
+        parcalar.add(t[bas to i])
+        i = bas - 1
+    }
+    var ters: [text] = []
+    repeat j from parcalar.length to 1 step -1 {
+        ters.add(parcalar[j])
+    }
+    return ters.join(".")
+}
+
+# Metin genişliğe sığmazsa sonunu kes: "uzun ad…"
+fn sigdir(t: text, tur: text, g: float) -> text {
+    use screen
+    if t.length is 0 or arayuz.genislik(t, tur) <= g {
+        return t
+    }
+    var n = t.length
+    repeat while n > 1 and arayuz.genislik("{t[1 to n]}…", tur) > g {
+        n = n - math.max_int(1, (n // 8))
+    }
+    return "{t[1 to n]}…"
+}
+
+# Yol sığmazsa başını kes: "…\klasor\dosya"
+fn sigdir_bas(t: text, tur: text, g: float) -> text {
+    use screen
+    if t.length is 0 or arayuz.genislik(t, tur) <= g {
+        return t
+    }
+    var b = 1
+    repeat while b < t.length and arayuz.genislik("…{t[b to t.length]}", tur) > g {
+        b = b + math.max_int(1, (t.length - b) // 8)
+    }
+    return "…{t[b to t.length]}"
+}
+
+fn ondalik(x: float) -> text {
+    return text(float(int(x * 10.0 + 0.5)) / 10.0).replace(".", ",")
+}
+
+# Ağaç haritası (squarified): değerler büyükten küçüğe; her kutu [x, y, g, y]
+fn yerlesim(degerler: [float], x0: float, y0: float, g0: float, h0: float) -> [[float]] {
+    var sonuc: [[float]] = []
+    var toplam = 0.0
+    repeat i from 1 to degerler.length {
+        toplam = toplam + degerler[i]
+    }
+    if toplam <= 0.0 {
+        return sonuc
+    }
+    var olcek = g0 * h0 / toplam
+    var alan: [float] = []
+    repeat i from 1 to degerler.length {
+        alan.add(degerler[i] * olcek)
+    }
+    var x = x0
+    var y = y0
+    var g = g0
+    var h = h0
+    var i = 1
+    repeat while i <= alan.length {
+        var kisa = math.min(g, h)
+        var j = i
+        var en_kotu = _kotu(alan, i, j, kisa)
+        repeat while j + 1 <= alan.length and _kotu(alan, i, j + 1, kisa) <= en_kotu {
+            j = j + 1
+            en_kotu = _kotu(alan, i, j, kisa)
+        }
+        var satir_toplam = 0.0
+        repeat k from i to j {
+            satir_toplam = satir_toplam + alan[k]
+        }
+        if g >= h {
+            var sg = satir_toplam / math.max(h, 0.001)
+            var yy = y
+            repeat k from i to j {
+                var kh = alan[k] / math.max(sg, 0.001)
+                sonuc.add([x, yy, sg, kh])
+                yy = yy + kh
+            }
+            x = x + sg
+            g = g - sg
+        } else {
+            var sh = satir_toplam / math.max(g, 0.001)
+            var xx = x
+            repeat k from i to j {
+                var kg = alan[k] / math.max(sh, 0.001)
+                sonuc.add([xx, y, kg, sh])
+                xx = xx + kg
+            }
+            y = y + sh
+            h = h - sh
+        }
+        i = j + 1
+    }
+    return sonuc
+}
+
+fn _kotu(alan: [float], i: int, j: int, kisa: float) -> float {
+    var s = 0.0
+    var en_buyuk = 0.0
+    var en_kucuk = alan[i]
+    repeat k from i to j {
+        s = s + alan[k]
+        en_buyuk = math.max(en_buyuk, alan[k])
+        en_kucuk = math.min(en_kucuk, alan[k])
+    }
+    if s <= 0.0 or en_kucuk <= 0.0 {
+        return 1000000000.0
+    }
+    var k2 = kisa * kisa
+    return math.max(k2 * en_buyuk / (s * s), (s * s) / (k2 * en_kucuk))
+}
+
+type Dedektif {
+    sekme: text = "disk"
+    kok: text = "C:\\"
+    suruculer: [text] = []
+    istek: text = ""                      # ana döngüye: "tara", "kopya", "rontgen", "projeler", "cop"
+    # disk
+    taraniyor: bool = false
+    tarandi: bool = false
+    sayac: int = 0
+    bas_zamani: float = 0.0
+    t: tarama.Tarama = tarama.Tarama()
+    gecerli: int = 1                      # haritada gösterilen klasör
+    cocuklar: [int] = []
+    ustte_kutu: int = 0
+    sag_sekme: text = "buyuk"
+    liste_kaydir: float = 0.0
+    unity_klasorleri: [int] = []
+    tasinanlar: [text] = []
+    # kopyalar
+    kopya_araniyor: bool = false
+    kopya_bitti: bool = false
+    kopya_sayac: int = 0
+    kopya_toplam: int = 0
+    kopyalar: [[tarama.Dosya]] = []
+    # onay penceresi
+    onay_yolu: text = ""
+    onay_metni: text = ""
+    cop_yolu: text = ""
+    # unity
+    projeler: [text] = []
+    projeler_araniyor: bool = false
+    secili_proje: int = 0
+    rontgen_proje: text = ""
+    rontgen_cekiliyor: bool = false
+    rontgen_sayac: int = 0
+    rapor: unity.Rapor = unity.Rapor(proje: "")
+    rapor_var: bool = false
+    unity_sekme: text = "buyuk"
+    unity_kaydir: float = 0.0
+    durum: text = ""
+
+    fn change kare() {
+        use screen
+        use files
+        arayuz.kare_basi()
+        var w = float(graphics.screen_width())
+        var h = float(graphics.screen_height())
+        graphics.begin_drawing(arayuz.ZEMIN)
+        if sekme is "disk" {
+            _disk(w, h)
+        } else {
+            _unity(w, h)
+        }
+        _ust(w)
+        if onay_yolu.length > 0 {
+            _onay(w, h)
+        }
+        arayuz.kare_sonu()
+        graphics.end_drawing()
+    }
+
+    fn change _ust(w: float) {
+        use files
+        use screen
+        graphics.draw_rectangle(0.0, 0.0, w, UST, arayuz.PANEL)
+        graphics.draw_rectangle(0.0, UST - 1.0, w, 1.0, arayuz.CIZGI)
+        graphics.draw_rounded(16.0, 14.0, 28.0, 28.0, 7.0, arayuz.VURGU)
+        arayuz.simge(arayuz.S_ARA, 22.0, 20.0, graphics.WHITE)
+        arayuz.yazi_tur("Vash Dedektif", "k", 54.0, 17.0, arayuz.YAZI)
+        # sekmeler
+        var sg = 300.0
+        var sx = (w - sg) / 2.0
+        graphics.draw_rounded(sx, 11.0, sg, 34.0, 8.0, arayuz.ALAN)
+        var adlar = ["Disk", "Unity projeleri"]
+        var kodlar = ["disk", "unity"]
+        repeat i from 1 to 2 {
+            var bx = sx + float(i - 1) * sg / 2.0
+            if sekme is kodlar[i] {
+                graphics.draw_rounded(bx + 3.0, 14.0, sg / 2.0 - 6.0, 28.0, 6.0, arayuz.PANEL2)
+                graphics.draw_rounded_outline(bx + 3.0, 14.0, sg / 2.0 - 6.0, 28.0, 6.0, 1.0, arayuz.ALAN_CIZGI)
+            }
+            var rg = arayuz.YAZI2
+            if sekme is kodlar[i] {
+                rg = arayuz.YAZI
+            }
+            var ag = arayuz.genislik(adlar[i], "k")
+            arayuz.yazi_tur(adlar[i], "k", bx + (sg / 2.0 - ag) / 2.0, 16.0, rg)
+            if arayuz.icinde(bx, 11.0, sg / 2.0, 34.0) and not arayuz.ENGEL {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI {
+                    sekme = kodlar[i]
+                    if sekme is "unity" and projeler.length is 0 and not projeler_araniyor {
+                        istek = "projeler"
+                    }
+                }
+            }
+        }
+        var c = "{fs.cores()} çekirdek"
+        arayuz.yazi_tur(c, "s", w - 16.0 - arayuz.genislik(c, "s"), 20.0, arayuz.SOLUK)
+    }
+
+    # ================= DİSK =================
+    fn change _disk(w: float, h: float) {
+        use screen
+        use files
+        # araç çubuğu
+        var y = UST + 16.0
+        var x = 20.0
+        repeat i from 1 to suruculer.length {
+            var s = suruculer[i]
+            var top = fs.disk_size(s)
+            var bos = fs.disk_free(s)
+            var etiket = "{s}  {fs.size_text(top - bos)} / {fs.size_text(top)}"
+            var bg = arayuz.genislik(etiket, "k") + 52.0
+            var sec = kok is s
+            graphics.draw_rounded(x, y, bg, 40.0, 8.0, arayuz.PANEL)
+            if sec {
+                graphics.draw_rounded_outline(x, y, bg, 40.0, 8.0, 1.5, arayuz.VURGU)
+            } else {
+                graphics.draw_rounded_outline(x, y, bg, 40.0, 8.0, 1.0, arayuz.CIZGI)
+            }
+            arayuz.simge(arayuz.S_DISK, x + 12.0, y + 12.0, arayuz.YAZI2)
+            arayuz.yazi_tur(etiket, "k", x + 38.0, y + 9.0, arayuz.YAZI)
+            var oran = 0.0
+            if top > 0 {
+                oran = float(top - bos) / float(top)
+            }
+            graphics.draw_rounded(x + 38.0, y + 32.0, bg - 50.0, 3.0, 1.5, arayuz.CIZGI)
+            graphics.draw_rounded(x + 38.0, y + 32.0, (bg - 50.0) * oran, 3.0, 1.5, arayuz.VURGU)
+            if arayuz.icinde(x, y, bg, 40.0) and not arayuz.ENGEL and not taraniyor {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI {
+                    kok = s
+                }
+            }
+            x = x + bg + 10.0
+        }
+        var yeni = arayuz.metin_kutusu("kok", x, y + 3.0, math.max(200.0, w - x - 160.0), 34.0, kok)
+        if yeni is not kok {
+            kok = yeni
+        }
+        if arayuz.dugme("tara", "Tara", arayuz.S_ARA, w - 140.0, y + 3.0, 120.0, 34.0, "ana") and not taraniyor {
+            istek = "tara"
+        }
+        var ust = UST + 72.0
+        if taraniyor {
+            _tarama_suruyor(w, h, ust)
+            return
+        }
+        if not tarandi {
+            _bos_disk(w, h, ust)
+            return
+        }
+        # özet şeridi
+        var hiz = 0.0
+        if t.sure > 0.0 {
+            hiz = float(t.dosya_sayisi) / t.sure
+        }
+        var ozet = "{sayi(t.dosya_sayisi)} dosya   ·   {sayi(t.klasorler.length)} klasör   ·   {ondalik(t.sure)} sn   ·   saniyede {sayi(int(hiz))} dosya"
+        arayuz.yazi_tur(ozet, "k", 20.0, ust + 2.0, arayuz.VURGU_ACIK)
+        var sag_g = 400.0
+        var hx = 20.0
+        var hy = ust + 36.0
+        var hg = w - sag_g - 40.0
+        var hh = h - hy - 20.0
+        _harita(hx, hy, hg, hh)
+        _sag_panel(w - sag_g - 10.0, ust + 36.0, sag_g - 10.0, h - ust - 56.0)
+    }
+
+    fn change _bos_disk(w: float, h: float, ust: float) {
+        use screen
+        var kg = 560.0
+        var kh = 220.0
+        var x = (w - kg) / 2.0
+        var y = ust + (h - ust - kh) / 2.0 - 40.0
+        graphics.draw_rounded(x, y, kg, kh, 14.0, arayuz.PANEL)
+        graphics.draw_rounded_outline(x, y, kg, kh, 14.0, 1.0, arayuz.CIZGI)
+        graphics.draw_rounded(x + 28.0, y + 28.0, 48.0, 48.0, 12.0, arayuz.VURGU_ZEMIN)
+        arayuz.simge(arayuz.S_DISK, x + 44.0, y + 44.0, arayuz.VURGU_ACIK)
+        arayuz.yazi_tur("Diskinde yeri ne kaplıyor?", "b", x + 92.0, y + 30.0, arayuz.YAZI)
+        arayuz.yazi("Bir sürücü ya da klasör seç ve Tara'ya bas.", x + 92.0, y + 62.0, arayuz.YAZI2)
+        arayuz.yazi("Vash, işi bütün işlemci çekirdeklerine böler: yüz binlerce", x + 28.0, y + 112.0, arayuz.YAZI2)
+        arayuz.yazi("dosya birkaç saniyede biter. Sonra en büyük klasörleri,", x + 28.0, y + 136.0, arayuz.YAZI2)
+        arayuz.yazi("kopya dosyaları ve Unity'nin şişen Library klasörlerini gösterir.", x + 28.0, y + 160.0, arayuz.YAZI2)
+    }
+
+    fn change _tarama_suruyor(w: float, h: float, ust: float) {
+        use files
+        use screen
+        var kg = 560.0
+        var kh = 200.0
+        var x = (w - kg) / 2.0
+        var y = ust + (h - ust - kh) / 2.0 - 40.0
+        graphics.draw_rounded(x, y, kg, kh, 14.0, arayuz.PANEL)
+        graphics.draw_rounded_outline(x, y, kg, kh, 14.0, 1.0, arayuz.CIZGI)
+        var gecen = graphics.elapsed() - bas_zamani
+        arayuz.yazi_tur("Taranıyor: {kok}", "b", x + 28.0, y + 26.0, arayuz.YAZI)
+        arayuz.yazi_tur("{sayi(sayac)}", "b", x + 28.0, y + 72.0, arayuz.VURGU_ACIK)
+        arayuz.yazi("dosya bulundu", x + 36.0 + arayuz.genislik(sayi(sayac), "b"), y + 76.0, arayuz.YAZI2)
+        var hiz = 0
+        if gecen > 0.1 {
+            hiz = int(float(sayac) / gecen)
+        }
+        arayuz.yazi("{ondalik(gecen)} sn   ·   saniyede {sayi(hiz)} dosya   ·   {fs.cores()} işçi", x + 28.0, y + 112.0, arayuz.YAZI2)
+        # kayan çubuk
+        var bx = x + 28.0
+        var bg = kg - 56.0
+        graphics.draw_rounded(bx, y + 152.0, bg, 6.0, 3.0, arayuz.CIZGI)
+        var p = math.fmod(gecen * 0.6, 1.0)
+        var parca = bg * 0.25
+        var sx = bx + (bg + parca) * p - parca
+        graphics.clip_begin(bx, y + 150.0, bg, 10.0)
+        graphics.draw_rounded(sx, y + 152.0, parca, 6.0, 3.0, arayuz.VURGU)
+        graphics.clip_end()
+    }
+
+    fn change klasore_gir(i: int) {
+        gecerli = i
+        cocuklar = tarama.cocuklari(t, i)
+    }
+
+    fn change _harita(x: float, y: float, g: float, h: float) {
+        use screen
+        use files
+        # yol ve geri
+        var yol = tarama.yolu(t.klasorler, gecerli)
+        var k = t.klasorler[gecerli]
+        if arayuz.dugme("yukari", "", arayuz.S_YUKARI, x, y, 34.0, 32.0, "normal") and gecerli is not 1 {
+            klasore_gir(k.ust)
+        }
+        if arayuz.dugme("gezgin", "", arayuz.S_KLASOR, x + 40.0, y, 34.0, 32.0, "normal") {
+            fs.reveal(yol)
+        }
+        arayuz.yazi_tur(yol, "k", x + 86.0, y + 4.0, arayuz.YAZI)
+        var bilgi = "{fs.size_text(k.boyut)}  ·  {sayi(k.dosya)} dosya"
+        arayuz.yazi_tur(bilgi, "s", x + g - arayuz.genislik(bilgi, "s"), y + 8.0, arayuz.YAZI2)
+        var my = y + 44.0
+        var mh = h - 44.0
+        # kutular: alt klasörler (+ bu klasördeki dosyalar)
+        var degerler: [float] = []
+        var idler: [int] = []
+        var cocuk_toplam = 0
+        repeat i from 1 to cocuklar.length {
+            var c = t.klasorler[cocuklar[i]]
+            cocuk_toplam = cocuk_toplam + c.boyut
+            if c.boyut > 0 and idler.length < 60 {
+                degerler.add(float(c.boyut))
+                idler.add(cocuklar[i])
+            }
+        }
+        var kendi = k.boyut - cocuk_toplam
+        if kendi > 0 {
+            degerler.add(float(kendi))
+            idler.add(0)
+        }
+        # büyükten küçüğe (kendi dosyaları da araya girsin)
+        var sira: [int] = []
+        repeat i from 1 to degerler.length {
+            sira.add(i)
+        }
+        sira.sort(by: fn(a, b) => degerler[a] > degerler[b])
+        var sirali: [float] = []
+        var sirali_id: [int] = []
+        repeat i from 1 to sira.length {
+            sirali.add(degerler[sira[i]])
+            sirali_id.add(idler[sira[i]])
+        }
+        var kutular = yerlesim(sirali, x, my, g, mh)
+        ustte_kutu = -1
+        repeat i from 1 to kutular.length {
+            var b = kutular[i]
+            var id = sirali_id[i]
+            var temel = renk(RENKLER[(i - 1) % RENKLER.length + 1])
+            if id is 0 {
+                temel = graphics.rgb(92, 96, 110)
+            }
+            var ustte = arayuz.icinde(b[1], b[2], b[3], b[4]) and not arayuz.ENGEL
+            var ton = graphics.fade(temel, 0.78)
+            if ustte {
+                ton = temel
+                ustte_kutu = id
+            }
+            graphics.draw_rounded(b[1] + 2.0, b[2] + 2.0, b[3] - 4.0, b[4] - 4.0, 6.0, ton)
+            if b[3] > 70.0 and b[4] > 40.0 {
+                var ad = "Bu klasördeki dosyalar"
+                var boy = kendi
+                if id > 0 {
+                    ad = t.klasorler[id].ad
+                    boy = t.klasorler[id].boyut
+                }
+                graphics.clip_begin(b[1] + 4.0, b[2] + 4.0, b[3] - 8.0, b[4] - 8.0)
+                arayuz.yazi_tur(ad, "k", b[1] + 12.0, b[2] + 8.0, graphics.WHITE)
+                arayuz.yazi_tur(fs.size_text(boy), "s", b[1] + 12.0, b[2] + 30.0, graphics.rgba(255, 255, 255, 200))
+                if t.klasorler[math.max_int(id, 1)].unity and id > 0 {
+                    arayuz.yazi_tur("Unity projesi", "s", b[1] + 12.0, b[2] + 48.0, renk("#ffe26b"))
+                }
+                graphics.clip_end()
+            }
+            if ustte and id > 0 {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI {
+                    klasore_gir(id)
+                    arayuz.aktif("harita")
+                }
+            }
+        }
+        if kutular.length is 0 {
+            arayuz.yazi("Bu klasör boş.", x + 20.0, my + 20.0, arayuz.SOLUK)
+        }
+    }
+
+    # ---------- sağ panel: büyük dosyalar / Unity çöpleri / kopyalar ----------
+    fn change _sag_panel(x: float, y: float, g: float, h: float) {
+        use screen
+        use files
+        graphics.draw_rounded(x, y, g, h, 12.0, arayuz.PANEL)
+        graphics.draw_rounded_outline(x, y, g, h, 12.0, 1.0, arayuz.CIZGI)
+        var adlar = ["Büyük dosyalar", "Unity", "Kopyalar"]
+        var kodlar = ["buyuk", "unity", "kopya"]
+        var parca = (g - 24.0) / 3.0
+        repeat i from 1 to 3 {
+            var bx = x + 12.0 + float(i - 1) * parca
+            var secili = sag_sekme is kodlar[i]
+            if secili {
+                graphics.draw_rounded(bx, y + 12.0, parca - 4.0, 30.0, 6.0, arayuz.VURGU_ZEMIN)
+            }
+            var rg = arayuz.YAZI2
+            if secili {
+                rg = arayuz.VURGU_ACIK
+            }
+            var ag = arayuz.genislik(adlar[i], "k")
+            arayuz.yazi_tur(adlar[i], "k", bx + (parca - 4.0 - ag) / 2.0, y + 15.0, rg)
+            if arayuz.icinde(bx, y + 12.0, parca, 30.0) and not arayuz.ENGEL {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI {
+                    sag_sekme = kodlar[i]
+                    liste_kaydir = 0.0
+                }
+            }
+        }
+        var ly = y + 56.0
+        var lh = h - 68.0
+        if arayuz.icinde(x, ly, g, lh) and not arayuz.ENGEL {
+            liste_kaydir = math.max(0.0, liste_kaydir - arayuz.TEKER * 60.0)
+        }
+        graphics.clip_begin(x, ly, g, lh)
+        if sag_sekme is "buyuk" {
+            _buyukler(x + 12.0, ly - liste_kaydir, g - 24.0)
+        } else if sag_sekme is "unity" {
+            _unity_copleri(x + 12.0, ly - liste_kaydir, g - 24.0)
+        } else {
+            _kopyalar_listesi(x + 12.0, ly - liste_kaydir, g - 24.0)
+        }
+        graphics.clip_end()
+    }
+
+    fn change _dosya_satiri(id: text, yol: text, boyut: int, oran: float, x: float, y: float, g: float) {
+        use screen
+        use files
+        var ustte = arayuz.icinde(x, y, g, 50.0) and not arayuz.ENGEL and arayuz.FARE_Y > UST + 120.0
+        if ustte {
+            graphics.draw_rounded(x, y, g, 50.0, 7.0, arayuz.USTUNDE)
+        }
+        var ad = fs.name(yol)
+        var bt = fs.size_text(boyut)
+        var bg = arayuz.genislik(bt, "k")
+        arayuz.yazi(sigdir(ad, "n", g - bg - 28.0), x + 8.0, y + 4.0, arayuz.YAZI)
+        arayuz.yazi_tur(sigdir_bas(fs.parent(yol), "s", g - 104.0), "s", x + 8.0, y + 26.0, arayuz.SOLUK)
+        arayuz.yazi_tur(bt, "k", x + g - bg - 8.0, y + 4.0, arayuz.YAZI)
+        graphics.draw_rounded(x + g - 88.0, y + 32.0, 80.0, 4.0, 2.0, arayuz.CIZGI)
+        graphics.draw_rounded(x + g - 88.0, y + 32.0, 80.0 * math.clamp(oran, 0.02, 1.0), 4.0, 2.0, arayuz.VURGU)
+        if ustte {
+            arayuz.imlec(graphics.CURSOR_HAND)
+            if arayuz.BASILDI {
+                fs.reveal(yol)
+                arayuz.aktif(id)
+            }
+        }
+    }
+
+    fn change _buyukler(x: float, y0: float, g: float) {
+        use screen
+        use files
+        var y = y0
+        arayuz.yazi_tur("Tıkla: Dosya Gezgini'nde göster", "s", x + 8.0, y, arayuz.SOLUK)
+        y = y + 26.0
+        if t.buyukler.length is 0 {
+            arayuz.yazi("50 MB'tan büyük dosya yok.", x + 8.0, y, arayuz.SOLUK)
+            return
+        }
+        var en = float(t.buyukler[1].boyut)
+        repeat i from 1 to t.buyukler.length {
+            if i <= 120 {
+                var d = t.buyukler[i]
+                _dosya_satiri("b{i}", d.yol, d.boyut, float(d.boyut) / en, x, y, g)
+                y = y + 54.0
+            }
+        }
+    }
+
+    fn change _unity_copleri(x: float, y0: float, g: float) {
+        use screen
+        use files
+        var y = y0
+        if unity_klasorleri.length is 0 {
+            arayuz.yazi("Bu taramada Unity projesi yok.", x + 8.0, y, arayuz.SOLUK)
+            return
+        }
+        var toplam = 0
+        repeat i from 1 to unity_klasorleri.length {
+            toplam = toplam + _library_boyutu(unity_klasorleri[i])
+        }
+        graphics.draw_rounded(x, y, g, 74.0, 10.0, arayuz.VURGU_ZEMIN)
+        arayuz.yazi_tur(fs.size_text(toplam), "b", x + 14.0, y + 8.0, arayuz.VURGU_ACIK)
+        arayuz.yazi_tur("Unity'nin Library önbelleği. Silinebilir: Unity", "s", x + 14.0, y + 38.0, arayuz.YAZI2)
+        arayuz.yazi_tur("projeyi açınca yeniden oluşturur (ilk açılış uzun sürer).", "s", x + 14.0, y + 54.0, arayuz.YAZI2)
+        y = y + 88.0
+        repeat i from 1 to unity_klasorleri.length {
+            var k = unity_klasorleri[i]
+            var yol = tarama.yolu(t.klasorler, k)
+            var lib = _library_boyutu(k)
+            graphics.draw_rounded(x, y, g, 92.0, 9.0, arayuz.PANEL2)
+            var proje_adi = t.klasorler[k].ad
+            if proje_adi is "Oyun" {
+                proje_adi = "{fs.name(fs.parent(yol))} / Oyun"
+            }
+            arayuz.yazi_tur(proje_adi, "k", x + 14.0, y + 10.0, arayuz.YAZI)
+            arayuz.yazi_tur(sigdir_bas(yol, "s", g - 28.0), "s", x + 14.0, y + 34.0, arayuz.SOLUK)
+            var lib_yolu = fs.join(yol, "Library")
+            if _tasindi_mi(lib_yolu) {
+                arayuz.simge(arayuz.S_TAMAM, x + 14.0, y + 62.0, graphics.rgb(110, 220, 140))
+                arayuz.yazi_tur("Library çöpe taşındı", "s", x + 38.0, y + 60.0, graphics.rgb(110, 220, 140))
+            } else if lib > 0 {
+                arayuz.yazi_tur("Library: {fs.size_text(lib)}", "k", x + 14.0, y + 58.0, arayuz.YAZI)
+                if arayuz.dugme("lib{i}", "Çöpe taşı", arayuz.S_SIL, x + g - 132.0, y + 52.0, 120.0, 30.0, "normal") {
+                    onay_yolu = lib_yolu
+                    onay_metni = "{fs.name(fs.parent(yol))} / {t.klasorler[k].ad} projesinin Library klasörü ({fs.size_text(lib)}) Geri Dönüşüm Kutusu'na taşınacak. Unity projeyi bir sonraki açışta yeniden oluşturur."
+                }
+            } else {
+                arayuz.yazi_tur("Library yok (temiz)", "s", x + 14.0, y + 60.0, arayuz.SOLUK)
+            }
+            y = y + 100.0
+        }
+    }
+
+    fn _tasindi_mi(yol: text) -> bool {
+        repeat i from 1 to tasinanlar.length {
+            if tasinanlar[i] is yol {
+                return true
+            }
+        }
+        return false
+    }
+
+    fn _library_boyutu(k: int) -> int {
+        repeat j from 1 to t.klasorler.length {
+            if t.klasorler[j].ust is k and t.klasorler[j].ad is "Library" {
+                return t.klasorler[j].boyut
+            }
+        }
+        return 0
+    }
+
+    fn change _kopyalar_listesi(x: float, y0: float, g: float) {
+        use screen
+        use files
+        var y = y0
+        if kopya_araniyor {
+            arayuz.yazi_tur("Parmak izleri alınıyor...", "k", x + 8.0, y, arayuz.YAZI)
+            var oran = 0.0
+            if kopya_toplam > 0 {
+                oran = float(kopya_sayac) / float(kopya_toplam)
+            }
+            graphics.draw_rounded(x + 8.0, y + 32.0, g - 16.0, 6.0, 3.0, arayuz.CIZGI)
+            graphics.draw_rounded(x + 8.0, y + 32.0, (g - 16.0) * math.clamp(oran, 0.0, 1.0), 6.0, 3.0, arayuz.VURGU)
+            arayuz.yazi_tur("{sayi(kopya_sayac)} / {sayi(kopya_toplam)} dosya", "s", x + 8.0, y + 46.0, arayuz.YAZI2)
+            return
+        }
+        if not kopya_bitti {
+            var aday = tarama.kopya_aday_sayisi(t.esler)
+            arayuz.yazi("Aynı içerikli dosyaları bulur (5 MB'tan büyük).", x + 8.0, y, arayuz.YAZI2)
+            arayuz.yazi_tur("Aynı boyuttaki {sayi(aday)} dosyanın içeriği karşılaştırılacak.", "s", x + 8.0, y + 26.0, arayuz.SOLUK)
+            if arayuz.dugme("kopya", "Kopyaları bul", arayuz.S_KOPYA, x + 8.0, y + 56.0, g - 16.0, 38.0, "ana") {
+                istek = "kopya"
+                kopya_toplam = aday
+            }
+            return
+        }
+        if kopyalar.length is 0 {
+            arayuz.yazi("Kopya dosya bulunmadı.", x + 8.0, y, arayuz.SOLUK)
+            return
+        }
+        var bos = 0
+        repeat i from 1 to kopyalar.length {
+            bos = bos + kopyalar[i][1].boyut * (kopyalar[i].length - 1)
+        }
+        graphics.draw_rounded(x, y, g, 58.0, 10.0, arayuz.VURGU_ZEMIN)
+        arayuz.yazi_tur(fs.size_text(bos), "b", x + 14.0, y + 6.0, arayuz.VURGU_ACIK)
+        arayuz.yazi_tur("kopyalar yüzünden boşa gidiyor ({kopyalar.length} grup)", "s", x + 14.0, y + 36.0, arayuz.YAZI2)
+        y = y + 70.0
+        repeat i from 1 to kopyalar.length {
+            if i <= 60 {
+                var grup = kopyalar[i]
+                arayuz.yazi_tur("{grup.length} kopya · her biri {fs.size_text(grup[1].boyut)}", "k", x + 8.0, y, arayuz.YAZI)
+                y = y + 26.0
+                repeat j from 1 to grup.length {
+                    _dosya_satiri("k{i}_{j}", grup[j].yol, grup[j].boyut, 1.0, x, y, g)
+                    y = y + 52.0
+                }
+                y = y + 8.0
+            }
+        }
+    }
+
+    fn change _onay(w: float, h: float) {
+        use screen
+        graphics.draw_rectangle(0.0, 0.0, w, h, graphics.rgba(8, 9, 12, 170))
+        var kg = 520.0
+        var kh = 230.0
+        var x = (w - kg) / 2.0
+        var y = (h - kh) / 2.0
+        graphics.draw_rounded(x, y, kg, kh, 14.0, arayuz.PANEL)
+        graphics.draw_rounded_outline(x, y, kg, kh, 14.0, 1.0, arayuz.ALAN_CIZGI)
+        arayuz.simge(arayuz.S_SIL, x + 28.0, y + 32.0, arayuz.TEHLIKE)
+        arayuz.yazi_tur("Çöpe taşınsın mı?", "b", x + 56.0, y + 24.0, arayuz.YAZI)
+        # metni satırlara böl
+        var kelimeler = onay_metni.split(" ")
+        var satir = ""
+        var sy = y + 72.0
+        repeat i from 1 to kelimeler.length {
+            var deneme = "{satir} {kelimeler[i]}".trim()
+            if arayuz.genislik(deneme, "n") > kg - 56.0 {
+                arayuz.yazi(satir, x + 28.0, sy, arayuz.YAZI2)
+                sy = sy + 24.0
+                satir = kelimeler[i]
+            } else {
+                satir = deneme
+            }
+        }
+        arayuz.yazi(satir, x + 28.0, sy, arayuz.YAZI2)
+        if arayuz.dugme("onay_hayir", "Vazgeç", 0, x + kg - 28.0 - 250.0, y + kh - 62.0, 120.0, 38.0, "normal") or graphics.key_pressed(graphics.KEY_ESCAPE) {
+            onay_yolu = ""
+        }
+        if arayuz.dugme("onay_evet", "Çöpe taşı", arayuz.S_SIL, x + kg - 28.0 - 120.0, y + kh - 62.0, 120.0, 38.0, "tehlike") {
+            cop_yolu = onay_yolu
+            istek = "cop"
+            onay_yolu = ""
+        }
+    }
+
+    fn change tarama_bitti(sonuc: tarama.Tarama) {
+        t = sonuc
+        taraniyor = false
+        tarandi = true
+        kopya_bitti = false
+        kopyalar = []
+        unity_klasorleri = []
+        repeat i from 1 to t.klasorler.length {
+            if t.klasorler[i].unity and t.klasorler[i].ust >= 0 {
+                unity_klasorleri.add(i)
+            }
+        }
+        var l = t.klasorler
+        unity_klasorleri.sort(by: fn(a, b) => l[a].boyut > l[b].boyut)
+        klasore_gir(1)
+    }
+
+    # ================= UNITY =================
+    fn change _unity(w: float, h: float) {
+        use screen
+        use files
+        var sol = 320.0
+        graphics.draw_rectangle(0.0, UST, sol, h - UST, arayuz.PANEL)
+        graphics.draw_rectangle(sol - 1.0, UST, 1.0, h - UST, arayuz.CIZGI)
+        arayuz.baslik("Bu bilgisayardaki Unity projeleri", 20.0, UST + 20.0)
+        if arayuz.dugme("yenile", "", arayuz.S_YENILE, sol - 50.0, UST + 12.0, 34.0, 30.0, "hayalet") and not projeler_araniyor {
+            istek = "projeler"
+        }
+        var y = UST + 52.0
+        if projeler_araniyor {
+            arayuz.yazi("Aranıyor...", 20.0, y, arayuz.SOLUK)
+        }
+        repeat i from 1 to projeler.length {
+            var p = projeler[i]
+            var ustte = arayuz.icinde(10.0, y, sol - 20.0, 54.0) and not arayuz.ENGEL
+            if secili_proje is i {
+                graphics.draw_rounded(10.0, y, sol - 20.0, 54.0, 8.0, arayuz.VURGU_ZEMIN)
+            } else if ustte {
+                graphics.draw_rounded(10.0, y, sol - 20.0, 54.0, 8.0, arayuz.USTUNDE)
+            }
+            arayuz.simge(arayuz.S_OYUN, 24.0, y + 19.0, arayuz.YAZI2)
+            var ad = fs.name(p)
+            if ad is "Oyun" {
+                ad = "{fs.name(fs.parent(p))} / Oyun"
+            }
+            arayuz.yazi_tur(ad, "k", 50.0, y + 6.0, arayuz.YAZI)
+            arayuz.yazi_tur(sigdir_bas(p, "s", sol - 70.0), "s", 50.0, y + 30.0, arayuz.SOLUK)
+            if ustte {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI {
+                    secili_proje = i
+                    if not rontgen_cekiliyor and rontgen_proje is not p {
+                        rontgen_proje = p
+                        istek = "rontgen"
+                    }
+                }
+            }
+            y = y + 58.0
+        }
+        var x = sol + 28.0
+        var g = w - sol - 56.0
+        if rontgen_cekiliyor {
+            arayuz.yazi_tur("Röntgen çekiliyor: {fs.name(rontgen_proje)}", "b", x, UST + 28.0, arayuz.YAZI)
+            arayuz.yazi("{sayi(rontgen_sayac)} varlık incelendi · {fs.cores()} işçi", x, UST + 68.0, arayuz.YAZI2)
+            return
+        }
+        if not rapor_var {
+            arayuz.yazi_tur("Soldan bir proje seç", "b", x, UST + 28.0, arayuz.YAZI)
+            arayuz.yazi("Vash projenin bütün varlıklarını inceler: en büyük dosyalar, hiçbir yerde", x, UST + 70.0, arayuz.YAZI2)
+            arayuz.yazi("kullanılmayan varlıklar, telefonu yoran dokular ve sesler, script satırları.", x, UST + 94.0, arayuz.YAZI2)
+            return
+        }
+        _rapor(x, UST + 20.0, g, h - UST - 40.0)
+    }
+
+    fn change _rapor(x: float, y0: float, g: float, h: float) {
+        use screen
+        use files
+        var r = rapor
+        var y = y0
+        arayuz.yazi_tur(fs.name(r.proje), "b", x, y, arayuz.YAZI)
+        var alt = "Unity {r.surum}   ·   röntgen {ondalik(r.sure)} sn"
+        arayuz.yazi_tur(alt, "s", x + arayuz.genislik(fs.name(r.proje), "b") + 16.0, y + 8.0, arayuz.SOLUK)
+        if arayuz.dugme("proje_ac", "Klasörü aç", arayuz.S_KLASOR, x + g - 140.0, y - 4.0, 140.0, 32.0, "normal") {
+            fs.reveal(r.proje)
+        }
+        y = y + 44.0
+        # kartlar
+        var kg = (g - 36.0) / 4.0
+        _kart("Proje boyutu", fs.size_text(r.toplam), "Library önbelleği: {fs.size_text(r.library)}", x, y, kg)
+        _kart("Varlıklar", sayi(r.varliklar.length), "Assets: {fs.size_text(r.assets)}", x + (kg + 12.0), y, kg)
+        _kart("Script satırı", sayi(r.script_satir), "{sayi(r.kategori_sayi.get("script", else: 0))} C# dosyası", x + (kg + 12.0) * 2.0, y, kg)
+        _kart("Kullanılmıyor olabilir", fs.size_text(r.kullanilmayan_boyut), "{sayi(r.kullanilmayan_sayi)} varlık · {sayi(r.uyari_sayi)} uyarı", x + (kg + 12.0) * 3.0, y, kg)
+        y = y + 110.0
+        # türlere göre çubuk
+        var turler = r.kategori_boyut.keys()
+        var l = r.kategori_boyut
+        turler.sort(by: fn(a, b) => l[a] > l[b])
+        graphics.draw_rounded(x, y, g, 16.0, 8.0, arayuz.CIZGI)
+        var bx = x
+        repeat i from 1 to turler.length {
+            var pay = float(r.kategori_boyut[turler[i]]) / float(math.max_int(1, r.assets)) * g
+            if pay > 1.0 {
+                graphics.draw_rectangle(bx, y, pay, 16.0, renk(RENKLER[(i - 1) % RENKLER.length + 1]))
+            }
+            bx = bx + pay
+        }
+        y = y + 26.0
+        var ex = x
+        repeat i from 1 to turler.length {
+            var e = "{unity.tur_adi(turler[i])} {fs.size_text(r.kategori_boyut[turler[i]])}"
+            var eg = arayuz.genislik(e, "s") + 28.0
+            if ex + eg > x + g {
+                ex = x
+                y = y + 22.0
+            }
+            graphics.draw_rounded(ex, y + 4.0, 10.0, 10.0, 3.0, renk(RENKLER[(i - 1) % RENKLER.length + 1]))
+            arayuz.yazi_tur(e, "s", ex + 16.0, y, arayuz.YAZI2)
+            ex = ex + eg
+        }
+        y = y + 40.0
+        # liste sekmeleri
+        var adlar = ["En büyük varlıklar", "Kullanılmıyor olabilir ({r.kullanilmayan_sayi})", "Telefon uyarıları ({r.uyari_sayi})"]
+        var kodlar = ["buyuk", "kullanilmayan", "uyari"]
+        var tx = x
+        repeat i from 1 to 3 {
+            var tg = arayuz.genislik(adlar[i], "k") + 28.0
+            var secili = unity_sekme is kodlar[i]
+            if secili {
+                graphics.draw_rounded(tx, y, tg, 32.0, 7.0, arayuz.VURGU_ZEMIN)
+            }
+            var rg = arayuz.YAZI2
+            if secili {
+                rg = arayuz.VURGU_ACIK
+            }
+            arayuz.yazi_tur(adlar[i], "k", tx + 14.0, y + 4.0, rg)
+            if arayuz.icinde(tx, y, tg, 32.0) and not arayuz.ENGEL {
+                arayuz.imlec(graphics.CURSOR_HAND)
+                if arayuz.BASILDI {
+                    unity_sekme = kodlar[i]
+                    unity_kaydir = 0.0
+                }
+            }
+            tx = tx + tg + 6.0
+        }
+        y = y + 44.0
+        var lh = y0 + h - y
+        if arayuz.icinde(x, y, g, lh) and not arayuz.ENGEL {
+            unity_kaydir = math.max(0.0, unity_kaydir - arayuz.TEKER * 60.0)
+        }
+        graphics.clip_begin(x, y, g, lh)
+        var ly = y - unity_kaydir
+        var en = 1.0
+        if r.varliklar.length > 0 {
+            en = float(r.varliklar[1].boyut)
+        }
+        var adet = 0
+        repeat i from 1 to r.varliklar.length {
+            var v = r.varliklar[i]
+            var goster = unity_sekme is "buyuk"
+            if unity_sekme is "kullanilmayan" {
+                goster = v.kullanilmiyor
+            } else if unity_sekme is "uyari" {
+                goster = v.uyari.length > 0
+            }
+            if goster and adet < 200 {
+                adet = adet + 1
+                if ly > y - 60.0 and ly < y + lh {
+                    _varlik_satiri(i, v, en, x, ly, g)
+                }
+                ly = ly + 52.0
+            }
+        }
+        if adet is 0 {
+            arayuz.yazi("Burada bir şey yok.", x + 8.0, y + 8.0, arayuz.SOLUK)
+        }
+        graphics.clip_end()
+    }
+
+    fn _kart(baslik: text, deger: text, alt: text, x: float, y: float, g: float) {
+        use screen
+        graphics.draw_rounded(x, y, g, 96.0, 12.0, arayuz.PANEL)
+        graphics.draw_rounded_outline(x, y, g, 96.0, 12.0, 1.0, arayuz.CIZGI)
+        arayuz.yazi_tur(baslik, "s", x + 16.0, y + 12.0, arayuz.YAZI2)
+        arayuz.yazi_tur(deger, "b", x + 16.0, y + 34.0, arayuz.YAZI)
+        arayuz.yazi_tur(sigdir(alt, "s", g - 32.0), "s", x + 16.0, y + 68.0, arayuz.SOLUK)
+    }
+
+    fn change _varlik_satiri(i: int, v: unity.Varlik, en: float, x: float, y: float, g: float) {
+        use screen
+        use files
+        var ustte = arayuz.icinde(x, y, g, 48.0) and not arayuz.ENGEL
+        if ustte {
+            graphics.draw_rounded(x, y, g, 48.0, 7.0, arayuz.USTUNDE)
+        }
+        var tur_renk = arayuz.YAZI2
+        graphics.draw_rounded(x + 8.0, y + 10.0, 84.0, 24.0, 6.0, arayuz.PANEL2)
+        var ta = unity.tur_adi(v.tur)
+        arayuz.yazi_tur(ta, "s", x + 8.0 + (84.0 - arayuz.genislik(ta, "s")) / 2.0, y + 12.0, tur_renk)
+        var bt = fs.size_text(v.boyut)
+        var bg = arayuz.genislik(bt, "k")
+        var alan = g - 104.0 - bg - 116.0
+        arayuz.yazi(sigdir(fs.name(v.yol), "n", alan), x + 104.0, y + 2.0, arayuz.YAZI)
+        var alt = fs.parent(v.yol)
+        var alt_renk = arayuz.SOLUK
+        if v.uyari.length > 0 {
+            alt = v.uyari
+            alt_renk = graphics.rgb(255, 196, 77)
+        } else if v.kullanilmiyor {
+            alt = "Hiçbir sahne, prefab ya da materyal kullanmıyor"
+            alt_renk = graphics.rgb(255, 150, 120)
+        } else if v.satir > 0 {
+            alt = "{sayi(v.satir)} satır  ·  {fs.parent(v.yol)}"
+        } else if v.piksel > 0 {
+            alt = "{v.piksel} px  ·  {fs.parent(v.yol)}"
+        }
+        arayuz.yazi_tur(sigdir(alt, "s", alan), "s", x + 104.0, y + 25.0, alt_renk)
+        arayuz.yazi_tur(bt, "k", x + g - bg - 100.0, y + 12.0, arayuz.YAZI)
+        graphics.draw_rounded(x + g - 88.0, y + 21.0, 80.0, 4.0, 2.0, arayuz.CIZGI)
+        graphics.draw_rounded(x + g - 88.0, y + 21.0, 80.0 * math.clamp(float(v.boyut) / en, 0.02, 1.0), 4.0, 2.0, arayuz.VURGU)
+        if ustte {
+            arayuz.imlec(graphics.CURSOR_HAND)
+            if arayuz.BASILDI {
+                fs.reveal(fs.join(rapor.proje, v.yol.replace("/", "\\")))
+                arayuz.aktif("v{i}")
+            }
+        }
+    }
+}
+
+# ---------- arka plan işleri ----------
+fn cope_tasi(yol: text) -> bool {
+    use files
+    return fs.trash(yol)
+}
+
+# ---------- başlat ----------
+var girdiler = args()
+var ekran = ""
+var ilk_kok = ""
+var ilk_sekme = "disk"
+var ilk_proje = ""
+var ilk_sag = ""
+var i = 1
+repeat while i <= girdiler.length {
+    if girdiler[i] is "--ekran" and i < girdiler.length {
+        ekran = girdiler[i + 1]
+        i = i + 1
+    } else if girdiler[i] is "--kok" and i < girdiler.length {
+        ilk_kok = girdiler[i + 1]
+        i = i + 1
+    } else if girdiler[i] is "--sekme" and i < girdiler.length {
+        ilk_sekme = girdiler[i + 1]
+        i = i + 1
+    } else if girdiler[i] is "--sag" and i < girdiler.length {
+        ilk_sag = girdiler[i + 1]
+        i = i + 1
+    } else if girdiler[i] is "--proje" and i < girdiler.length {
+        ilk_proje = girdiler[i + 1]
+        i = i + 1
+    }
+    i = i + 1
+}
+
+graphics.open_resizable_window(1500, 920, "Vash Dedektif")
+graphics.set_min_size(1100, 680)
+graphics.set_exit_key(0)
+arayuz.baslat()
+var d = Dedektif(suruculer: fs.drives())
+d.sekme = ilk_sekme
+if ilk_kok.length > 0 {
+    d.kok = ilk_kok
+    d.istek = "tara"
+}
+if ilk_sekme is "unity" {
+    d.istek = "projeler"
+    if ilk_proje.length > 0 {
+        d.projeler = [ilk_proje]                 # sadece verilen proje (aramadan)
+        d.secili_proje = 1
+        d.rontgen_proje = ilk_proje
+        d.istek = "rontgen"
+    }
+}
+var cekirdek = fs.cores()
+var kanal_tarama = channel[int]()
+var kanal_kopya = channel[int]()
+var kanal_rontgen = channel[int]()
+var tarama_isi: [task[tarama.Tarama]] = []
+var kopya_isi: [task[[[tarama.Dosya]]]] = []
+var rontgen_isi: [task[unity.Rapor]] = []
+var proje_isi: [task[[text]]] = []
+var cop_isi: [task[bool]] = []
+var cop_hedefi = ""
+var bitti_kare = 0
+var kare = 0
+repeat while graphics.is_open() {
+    # yeni işler
+    if d.istek is "tara" and tarama_isi.length is 0 {
+        tarama_isi.add(start tarama.tara(d.kok, kanal_tarama, cekirdek))
+        d.taraniyor = true
+        d.sayac = 0
+        d.bas_zamani = graphics.elapsed()
+    } else if d.istek is "kopya" and kopya_isi.length is 0 {
+        kopya_isi.add(start tarama.kopyalari_bul(d.t.esler, kanal_kopya, cekirdek))
+        d.kopya_araniyor = true
+        d.kopya_sayac = 0
+    } else if d.istek is "rontgen" and rontgen_isi.length is 0 {
+        rontgen_isi.add(start unity.rontgen(d.rontgen_proje, kanal_rontgen, cekirdek))
+        d.rontgen_cekiliyor = true
+        d.rontgen_sayac = 0
+    } else if d.istek is "projeler" and proje_isi.length is 0 {
+        proje_isi.add(start unity.projeleri_bul("C:\\Users", 5))
+        d.projeler_araniyor = true
+    } else if d.istek is "cop" and cop_isi.length is 0 {
+        cop_hedefi = d.cop_yolu
+        cop_isi.add(start cope_tasi(cop_hedefi))
+    }
+    d.istek = ""
+    # ilerleme
+    var n = kanal_tarama.try_receive(else: -1)
+    repeat while n >= 0 {
+        d.sayac = d.sayac + n
+        n = kanal_tarama.try_receive(else: -1)
+    }
+    n = kanal_kopya.try_receive(else: -1)
+    repeat while n >= 0 {
+        d.kopya_sayac = d.kopya_sayac + n
+        n = kanal_kopya.try_receive(else: -1)
+    }
+    n = kanal_rontgen.try_receive(else: -1)
+    repeat while n >= 0 {
+        d.rontgen_sayac = d.rontgen_sayac + n
+        n = kanal_rontgen.try_receive(else: -1)
+    }
+    # biten işler
+    if tarama_isi.length > 0 and tarama_isi[1].done() {
+        d.tarama_bitti(tarama_isi[1].wait())
+        tarama_isi = []
+        if ilk_sag.length > 0 {
+            d.sag_sekme = ilk_sag
+            if ilk_sag is "kopya" {
+                d.kopya_toplam = tarama.kopya_aday_sayisi(d.t.esler)
+                d.istek = "kopya"
+            }
+        }
+        if ilk_sag is not "kopya" {
+            bitti_kare = kare
+        }
+    }
+    if kopya_isi.length > 0 and kopya_isi[1].done() {
+        d.kopyalar = kopya_isi[1].wait()
+        kopya_isi = []
+        d.kopya_araniyor = false
+        d.kopya_bitti = true
+        bitti_kare = kare
+    }
+    if rontgen_isi.length > 0 and rontgen_isi[1].done() {
+        d.rapor = rontgen_isi[1].wait()
+        rontgen_isi = []
+        d.rontgen_cekiliyor = false
+        d.rapor_var = true
+        bitti_kare = kare
+    }
+    if proje_isi.length > 0 and proje_isi[1].done() {
+        d.projeler = proje_isi[1].wait()
+        proje_isi = []
+        d.projeler_araniyor = false
+        if ilk_proje.length > 0 {
+            repeat k from 1 to d.projeler.length {
+                if d.projeler[k] is ilk_proje {
+                    d.secili_proje = k
+                    d.rontgen_proje = ilk_proje
+                    d.istek = "rontgen"
+                }
+            }
+        }
+    }
+    if cop_isi.length > 0 and cop_isi[1].done() {
+        if cop_isi[1].wait() {
+            d.tasinanlar.add(cop_hedefi)
+        }
+        cop_isi = []
+    }
+    d.kare()
+    kare = kare + 1
+    if ekran.length > 0 and bitti_kare > 0 and kare is bitti_kare + 20 {
+        graphics.screenshot(ekran)
+        stop
+    }
+}
+graphics.close_window()

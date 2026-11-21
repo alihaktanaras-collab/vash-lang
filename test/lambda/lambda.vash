@@ -1,0 +1,59 @@
+# Lambda ve fonksiyon değerleri
+fn uygula(l: [int], f: fn(int) -> int) -> [int] {
+    var sonuc: [int] = []
+    repeat i from 1 to l.length {
+        sonuc.add(f(l[i]))
+    }
+    return sonuc
+}
+
+fn kare(x: int) -> int {
+    return x * x
+}
+
+fn ekleyici(n: int) -> fn(int) -> int {
+    return fn(x) => x + n                      # n yakalanır (kopyası)
+}
+
+var sayilar = [1, 2, 3, 4]
+print(uygula(sayilar, fn(x) => x * 10))
+print(uygula(sayilar, kare))
+var on_ekle = ekleyici(10)
+print(uygula(sayilar, on_ekle), on_ekle(5))
+
+var carpan = 3
+var carp: fn(int) -> int = fn(x) => x * carpan
+carpan = 100                                   # lambda eski kopyayla çalışır
+print(carp(2))
+
+var selam = fn(ad: text) => "Merhaba {ad}!"
+print(selam("Ali"))
+
+var yaz = fn(m: text) {
+    print("> {m}")
+}
+yaz("blok lambda")
+
+var islemler: [fn(int, int) -> int] = [fn(a, b) => a + b, fn(a, b) => a * b]
+repeat i from 1 to islemler.length {
+    var f = islemler[i]
+    print(f(6, 7))
+}
+
+var mutlak = fn(x: int) -> int {
+    if x < 0 {
+        return -x
+    }
+    return x
+}
+print(mutlak(-5), mutlak(3))
+
+var onekler = ["a", "b"]
+var birlestir = fn(s: text) => "{onekler.join("-")}:{s}"
+onekler.add("c")
+print(birlestir("x"))
+
+fn iki_kez(f: fn(text) -> text, x: text) -> text {
+    return f(f(x))
+}
+print(iki_kez(fn(s) => "({s})", "çekirdek"))

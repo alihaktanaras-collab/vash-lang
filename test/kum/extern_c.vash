@@ -1,0 +1,4 @@
+extern "kernel32" {
+    fn _DeleteFileA(yol: text) -> i32
+}
+print(_DeleteFileA("onemli.txt"))

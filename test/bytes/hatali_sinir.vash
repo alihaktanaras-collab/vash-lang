@@ -1,0 +1,2 @@
+var b = bytes(2)
+print(b.get_int(1, 4))

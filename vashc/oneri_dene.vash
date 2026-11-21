@@ -1,0 +1,14 @@
+# oneri.vash'ı dener: her satır "kelime|aday1,aday2,..." → en yakın aday
+import oneri
+
+var satirlar = read_lines(input().trim()) else: []
+repeat i from 1 to satirlar.length {
+    var p = satirlar[i].split("|")
+    if p.length is 2 {
+        var adaylar: [text] = []
+        if p[2].length > 0 {
+            adaylar = p[2].split(",")
+        }
+        print("{p[1]}|{oneri.en_yakin(p[1], adaylar)}")
+    }
+}

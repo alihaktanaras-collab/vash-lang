@@ -1,0 +1,6 @@
+import http
+fn gizli() {
+    use net
+    var c = http.get("https://example.com")
+}
+print("selam")

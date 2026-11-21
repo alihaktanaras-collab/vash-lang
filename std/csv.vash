@@ -1,0 +1,158 @@
+# csv: read and write comma-separated tables
+#
+#   import csv
+#   var rows = csv.parse(read_file("data.csv") else: "")     # [[text]]: rows, then cells
+#   print(rows[1][2])                                          # 1st row, 2nd cell
+#   var people = csv.parse_records("name,age\nAli,30\n")      # [{text: text}]: first row is the header
+#   print(people[1]["age"])
+#   write_file("out.csv", csv.stringify(rows))
+#
+# Handles quoted cells ("a, b"), doubled quotes inside them ("say ""hi"""),
+# line breaks inside quotes, \n and \r\n line ends. Empty lines are skipped.
+# Other separators: csv.parse_with(content, ";"), csv.stringify_with(rows, "\t").
+
+fn parse(content: text) -> [[text]] {
+    return parse_with(content, ",")
+}
+
+fn parse_with(content: text, separator: text) -> [[text]] {
+    var rows: [[text]] = []
+    var row: [text] = []
+    var n = content.length
+    var cr = char(13)
+    var i = 1
+    repeat while i <= n {
+        var value = ""
+        if content[i] is "\"" {                       # quoted cell
+            var pieces: [text] = []
+            i = i + 1
+            var run = i
+            var closed = false
+            repeat while i <= n and not closed {
+                if content[i] is "\"" {
+                    pieces.add(content[run to i - 1])
+                    if i < n and content[i + 1] is "\"" {   # "" → "
+                        pieces.add("\"")
+                        i = i + 2
+                        run = i
+                    } else {
+                        i = i + 1
+                        closed = true
+                    }
+                } else {
+                    i = i + 1
+                }
+            }
+            if not closed {
+                pieces.add(content[run to n])
+            }
+            value = pieces.join("")
+            i = _field_end(content, i, n, separator)  # ignore anything between the closing quote and the separator
+        } else {                                       # plain cell
+            var start = i
+            i = _field_end(content, i, n, separator)
+            value = content[start to i - 1]
+        }
+        row.add(value)
+        if i > n {
+            stop
+        }
+        if content[i] is separator {
+            i = i + 1
+            if i > n {
+                row.add("")                            # "a,b," at the very end
+            }
+        } else {                                       # line end: \n, \r\n or \r
+            if content[i] is cr and i < n and content[i + 1] is "\n" {
+                i = i + 1
+            }
+            i = i + 1
+            if not _blank(row) {
+                rows.add(row)
+            }
+            row = []
+        }
+    }
+    if row.length > 0 and not _blank(row) {
+        rows.add(row)
+    }
+    return rows
+}
+
+# Rows as records: the first row gives the names (header), every other row becomes {name: cell}.
+# Missing cells become "", extra cells are dropped.
+fn parse_records(content: text) -> [{text: text}] {
+    return records(parse(content))
+}
+
+fn records(rows: [[text]]) -> [{text: text}] {
+    var result: [{text: text}] = []
+    if rows.length is 0 {
+        return result
+    }
+    var header = rows[1]
+    repeat r from 2 to rows.length {
+        var row = rows[r]
+        var record: {text: text} = {}
+        repeat c from 1 to header.length {
+            if c <= row.length {
+                record[header[c]] = row[c]
+            } else {
+                record[header[c]] = ""
+            }
+        }
+        result.add(record)
+    }
+    return result
+}
+
+fn stringify(rows: [[text]]) -> text {
+    return stringify_with(rows, ",")
+}
+
+fn stringify_with(rows: [[text]], separator: text) -> text {
+    var lines: [text] = []
+    repeat r from 1 to rows.length {
+        var row = rows[r]
+        var cells: [text] = []
+        repeat c from 1 to row.length {
+            cells.add(_quote(row[c], separator))
+        }
+        lines.add(cells.join(separator))
+    }
+    if lines.length is 0 {
+        return ""
+    }
+    var body = lines.join("\n")
+    return "{body}\n"
+}
+
+# ---------- helpers ----------
+fn _field_end(content: text, from: int, n: int, separator: text) -> int {
+    var i = from
+    var cr = char(13)
+    repeat while i <= n {
+        var c = content[i]
+        if c is separator or c is "\n" or c is cr {
+            return i
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn _blank(row: [text]) -> bool {
+    return row.length is 1 and row[1].length is 0
+}
+
+fn _quote(v: text, separator: text) -> text {
+    var needs = v.contains(separator) or v.contains("\"") or v.contains("\n") or v.contains(char(13))
+    if not needs and v.length > 0 {
+        needs = v[1] is " " or v[v.length] is " "
+    }
+    if not needs {
+        return v
+    }
+    var inner = v.replace("\"", "\"\"")
+    return "\"{inner}\""
+}

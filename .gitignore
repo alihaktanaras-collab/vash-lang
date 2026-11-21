@@ -1,0 +1,39 @@
+# Derleme çıktıları / build outputs
+*.exe
+*.ll
+*.o
+*.obj
+*.pdb
+*.ilk
+__pycache__/
+derleyici/calisma_lto.o
+
+# Programların ürettiği dosyalar / files written by programs at run time
+kayit.json
+deneme_kayit.json
+disa_aktar.txt
+guvenlik.json
+GUVENLIK.txt
+vash_kopru_ekran.png
+ekran_*.png
+*_deneme.txt
+*_deneme.bin
+bytes_deneme.bin
+arka_plan_deneme.txt
+hesap_kayit.txt
+vash_spec_ornek.txt
+test/kum/alan/veri/
+test/kum/veri_ornek/rapor.txt
+test/motor_eksik/deneme_*.*
+test/motor_eksik/grafik_yeni.png
+kacti.txt
+
+# Kişisel / personal
+vash_notlar.txt
+.mcp.json
+.claude/settings.local.json
+
+# Test sertifikaları (gizli anahtar içerir; testler kendisi üretir) / test certificates (contain private keys)
+*.pfx
+*.pem
+*.key

@@ -1,0 +1,425 @@
+# =====================================================================
+#  VASH KOMUTU — tamamen Vash ile yazılmış derleyici
+# =====================================================================
+#      vash run   dosya.vash    derle ve çalıştır
+#      vash build dosya.vash    sadece .exe üret
+#      vash ir    dosya.vash    üretilen LLVM IR'ı göster
+#
+#  vash.cmd bu programı başlatır ve ne istendiğini ortam değişkenleriyle söyler:
+#      VASH_KOMUT  run / build / ir
+#      VASH_DOSYA  dosyanın yazıldığı hâli      VASH_TAM  tam yolu
+#      VASH_KOK    Vash'ın klasörü              VASH_CLANG  clang'ın yeri
+#
+#  Adımlar:  oku → kelimelere ayır → ağaç kur → modülleri birleştir → tipleri kontrol et
+#            → LLVM IR üret → clang ile .exe yap → (run ise) çalıştır
+# =====================================================================
+
+import lexer
+import parser
+import moduller
+import tipler
+import uretici
+import dil
+
+# C'nin hazır fonksiyonları: komut çalıştırmak, ortam değişkeni okumak, programı bitirmek
+extern "msvcrt" needs system {
+    fn _system(komut: text) -> i32
+    fn _getenv(ad: text) -> text
+}
+
+extern "msvcrt" {
+    fn _exit(kod: i32)
+}
+
+# Kum havuzu: programı süre sınırıyla, dosyaları bir klasöre kapatarak çalıştır
+extern "c" needs system {
+    fn _vash_kum_calistir(komut: text, klasor: text, ms: int) -> int
+}
+
+global var KUM_ACIK = false
+global var KUM_IZINLERI: [text] = []
+
+# Windows'un arayüz dili (Türkçe mi?)
+extern "kernel32" {
+    fn _GetUserDefaultUILanguage() -> i32
+}
+
+fn ortam(ad: text) -> text {
+    use system
+    return _getenv(ad)
+}
+
+# Bir komutu çalıştır, çıkış kodunu döndür.
+# (cmd.exe en dıştaki tırnakları siler; bu yüzden bütün komut bir kat daha tırnağa alınır)
+fn calistir(komut: text) -> int {
+    use system
+    return _system("\"{komut}\"")
+}
+
+fn hata(mesaj: text) {
+    print(dil.sec("HATA: {mesaj}", "ERROR: {mesaj}"))
+    _exit(1)
+}
+
+# Dosyanın bulunduğu klasör (import edilen dosyalar orada aranır)
+fn klasor(yol: text) -> text {
+    var son = 0
+    repeat i from 1 to yol.length {
+        if yol[i] is "/" or yol[i] is "\\" {
+            son = i
+        }
+    }
+    if son <= 1 {
+        return ""
+    }
+    return yol[1 to son - 1]
+}
+
+# Derlemenin sonucu: ya LLVM IR, ya da hangi aşamada hangi hata olduğu
+type Derleme {
+    ir: text
+    asama: text         # hata yoksa ""; varsa "lexer" / "parser" / "modules" / "types" / "codegen"
+    mesaj: text
+}
+
+# 1-4. istasyonlar: kodu LLVM IR'a çevir
+fn derle(kod: text, dosya_klasoru: text, kok: text) -> Derleme {
+    use files
+    match lexer.kelimelere_ayir(kod) {
+        Hata(mesaj) { return Derleme(ir: "", asama: "lexer", mesaj: mesaj) }
+        Tamam(tokenlar) {
+            match parser.agac_kur(tokenlar) {
+                Hata(mesaj) { return Derleme(ir: "", asama: "parser", mesaj: mesaj) }
+                Tamam(agac) {
+                    moduller.std_klasoru_ayarla("{kok}\\std")
+                    match moduller.bagla(agac, dosya_klasoru) {
+                        Hata(mesaj) { return Derleme(ir: "", asama: "modules", mesaj: mesaj) }
+                        Tamam(bagli) {
+                            if KUM_ACIK {
+                                tipler.kum_ayarla(KUM_IZINLERI, moduller.std_dosyalari())
+                            }
+                            match tipler.kontrol_et(bagli) {
+                                Hata(mesaj) { return Derleme(ir: "", asama: "types", mesaj: mesaj) }
+                                Tamam(tipli) {
+                                    match uretici.uret(tipli, "{kok}\\derleyici") {
+                                        Hata(mesaj) { return Derleme(ir: "", asama: "codegen", mesaj: mesaj) }
+                                        Tamam(sonuc) { return Derleme(ir: sonuc, asama: "", mesaj: "") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return Derleme(ir: "", asama: "codegen", mesaj: dil.sec("Bilinmeyen derleyici hatası.", "Unknown compiler error."))
+}
+
+fn ir_uret(kod: text, dosya_klasoru: text, kok: text) -> text {
+    use files
+    var d = derle(kod, dosya_klasoru, kok)
+    if d.asama.length > 0 {
+        hata(d.mesaj)
+    }
+    return d.ir
+}
+
+# =====================================================================
+#  vash check: sadece kontrol et (.exe üretme). --json ile ajanların okuyacağı biçimde.
+# =====================================================================
+#  {"ok": false, "file": "x.vash", "errors": [{"stage": "types", "file": "x.vash", "line": 2, "column": 7,
+#    "message": "'toplm' diye bir değişken yok.", "details": "Bunu mu demek istedin: 'toplam'?",
+#    "suggestion": "toplam"}]}
+
+# JSON metni: tırnak, ters bölü ve kontrol karakterleri kaçırılır
+fn json_metin(s: text) -> text {
+    var t = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace(char(13), "\\r").replace("\t", "\\t")
+    return "\"{t}\""
+}
+
+fn rakam_mi(h: text) -> bool {
+    return h.length is 1 and h.is_digit()
+}
+
+# Metnin başındaki sayıyı oku: "12, sütun 5: ..." → 12 (yoksa 0)
+fn bastaki_sayi(s: text) -> int {
+    var n = 0
+    var i = 1
+    repeat while i <= s.length and rakam_mi(s[i]) {
+        n = n * 10 + int(s[i])
+        i = i + 1
+    }
+    return n
+}
+
+fn sayi_uzunlugu(s: text) -> int {
+    var i = 0
+    repeat while i < s.length and rakam_mi(s[i + 1]) {
+        i = i + 1
+    }
+    return i
+}
+
+# Hata mesajını parçalarına ayır ve JSON olarak yaz.
+# Biçim: "[dosya.vash, ]Satır N[, sütun M]: mesaj\n   ayrıntılar"
+# İngilizce mesajlarda: "[dosya.vash, ]Line N[, column M]: message\n   details"
+fn hata_json(asama: text, mesaj: text, ana_dosya: text) -> text {
+    var dosya = ana_dosya
+    var satir = 0
+    var sutun = 0
+    var govde = mesaj
+    var satir_etiketleri = ["Satır ", "Line "]
+    var sutun_etiketleri = [", sütun ", ", column "]
+    repeat e from 1 to satir_etiketleri.length {
+        var satir_etiketi = satir_etiketleri[e]
+        var sutun_etiketi = sutun_etiketleri[e]
+        var parcalar = mesaj.split(satir_etiketi)
+        if parcalar.length > 1 and (parcalar[1].length is 0 or parcalar[1].ends_with(", ")) {
+            if parcalar[1].length > 0 {
+                dosya = parcalar[1][1 to parcalar[1].length - 2]
+            }
+            var kalan_parcalar: [text] = []
+            repeat i from 2 to parcalar.length {
+                kalan_parcalar.add(parcalar[i])
+            }
+            var kalan = kalan_parcalar.join(satir_etiketi)
+            satir = bastaki_sayi(kalan)
+            kalan = kalan[sayi_uzunlugu(kalan) + 1 to kalan.length]
+            if kalan.starts_with(sutun_etiketi) {
+                kalan = kalan[sutun_etiketi.length + 1 to kalan.length]
+                sutun = bastaki_sayi(kalan)
+                kalan = kalan[sayi_uzunlugu(kalan) + 1 to kalan.length]
+            }
+            if kalan.starts_with(": ") {
+                kalan = kalan[3 to kalan.length]
+            }
+            govde = kalan
+            stop
+        }
+    }
+    # İlk satır asıl mesaj; geri kalan satırlar ayrıntı (örnek, öneri...)
+    var satirlar = govde.split("\n")
+    var ana = satirlar[1]
+    var ayrinti: [text] = []
+    repeat i from 2 to satirlar.length {
+        ayrinti.add(satirlar[i].trim())
+    }
+    var oneri = ""
+    var oneri_etiketleri = ["Bunu mu demek istedin: '", "Did you mean: '"]
+    repeat e from 1 to oneri_etiketleri.length {
+        var bunu_mu = govde.split(oneri_etiketleri[e])
+        if bunu_mu.length > 1 and oneri.length is 0 {
+            oneri = bunu_mu[2].split("'")[1]
+        }
+    }
+    var alanlar = ["\"stage\": {json_metin(asama)}", "\"file\": {json_metin(dosya)}", "\"line\": {satir}", "\"column\": {sutun}", "\"message\": {json_metin(ana)}", "\"details\": {json_metin(ayrinti.join("\n"))}"]
+    if oneri.length > 0 {
+        alanlar.add("\"suggestion\": {json_metin(oneri)}")
+    }
+    return "\{{alanlar.join(", ")}\}"
+}
+
+fn dosya_adi(yol: text) -> text {
+    var son = 0
+    repeat i from 1 to yol.length {
+        if yol[i] is "/" or yol[i] is "\\" {
+            son = i
+        }
+    }
+    return yol[son + 1 to yol.length]
+}
+
+fn denetle(kod: text, kaynak: text, tam_yol: text, kok: text, json_mu: bool) {
+    use files
+    var d = derle(kod, klasor(tam_yol), kok)
+    var ad = dosya_adi(kaynak)
+    if json_mu {
+        if d.asama.length is 0 {
+            var izinler = tipler.kullanilan_izinler()
+            var parcalar: [text] = []
+            repeat i from 1 to izinler.length {
+                parcalar.add(json_metin(izinler[i]))
+            }
+            var kutuphaneler = tipler.kullanilan_c_kutuphaneleri()
+            var kparcalar: [text] = []
+            repeat i from 1 to kutuphaneler.length {
+                kparcalar.add(json_metin(kutuphaneler[i]))
+            }
+            print("\{\"ok\": true, \"file\": {json_metin(ad)}, \"errors\": [], \"permissions\": [{parcalar.join(", ")}], \"c_libraries\": [{kparcalar.join(", ")}]\}")
+        } else {
+            print("\{\"ok\": false, \"file\": {json_metin(ad)}, \"errors\": [{hata_json(d.asama, d.mesaj, ad)}]\}")
+            _exit(1)
+        }
+    } else {
+        if d.asama.length is 0 {
+            print(dil.sec("✓ {kaynak}: hata yok", "✓ {kaynak}: no errors"))
+        } else {
+            hata(d.mesaj)
+        }
+    }
+}
+
+# Bir metinde 'once'den sonra gelen ilk kelime (boşluğa ya da satır sonuna kadar)
+fn sonraki_kelime(metin: text, once: text) -> text {
+    var parcalar = metin.split(once)
+    if parcalar.length < 2 {
+        return ""
+    }
+    return parcalar[2].split("\n")[1].split(" ")[1].trim()
+}
+
+# LLVM IR'ı clang ile optimize edip makine koduna (.exe) çevir
+fn exe_uret(ir: text, ll_yolu: text, exe_yolu: text, kok: text, clang: text) {
+    use files
+    use system
+    if clang.length is 0 {
+        hata(dil.sec("clang bulunamadı. LLVM kurulu mu?", "clang was not found. Is LLVM installed?"))
+    }
+    # Çalışma zamanı (calisma.c) bir kere derlenir
+    var calisma_c = "{kok}\\derleyici\\calisma.c"
+    var calisma_o = "{kok}\\derleyici\\calisma_lto.o"
+    if not file_exists(calisma_o) {
+        if calistir("\"{clang}\" -O2 -flto -c \"{calisma_c}\" -o \"{calisma_o}\"") is not 0 {
+            hata(dil.sec("Çalışma zamanı derlenemedi.", "Could not compile the runtime."))
+        }
+    }
+    if not write_file(ll_yolu, ir) {
+        hata(dil.sec("'{ll_yolu}' dosyası yazılamadı.", "Could not write the file '{ll_yolu}'."))
+    }
+    # extern "kutuphane" ile istenen kütüphaneler (IR'ın içine not edilmişti)
+    var ekler: [text] = []
+    var satirlar = ir.split("\n")
+    repeat i from 1 to satirlar.length {
+        if satirlar[i].starts_with("; vash-kutuphane: ") {
+            var k = satirlar[i][19 to satirlar[i].length].trim()
+            var kucuk = k.lower()
+            if kucuk is "c" or kucuk is "m" or kucuk is "msvcrt" or kucuk is "ucrt" {
+                skip                                 # C'nin temel kütüphanesi zaten bağlı
+            }
+            if kucuk.ends_with(".lib") or kucuk.ends_with(".a") or k.contains("/") or k.contains("\\") {
+                ekler.add(" \"{k}\"")                # dosya yolu verilmiş
+            } else {
+                # Vash'ın kutuphaneler/ klasöründe hazır duruyorsa oradan bağla (ör: kutuphaneler/raylib/lib/libraylib.a)
+                var hazir = "{kok}\\kutuphaneler\\{k}\\lib"
+                if file_exists("{hazir}\\lib{k}.a") {
+                    ekler.add(" -L\"{hazir}\"")
+                }
+                ekler.add(" -l{k}")
+            }
+        }
+    }
+    var hata_yolu = "{ortam("TEMP")}\\vash_clang_hatasi.txt"
+    var sonuc = calistir("\"{clang}\" -O2 -flto -fuse-ld=lld -Wno-override-module \"{ll_yolu}\" \"{calisma_o}\" -lws2_32 -lshell32 -lwinhttp -lsecur32 -lcrypt32 -lncrypt{ekler.join("")} -o \"{exe_yolu}\" 2> \"{hata_yolu}\"")
+    if sonuc is not 0 {
+        var mesaj = read_file(hata_yolu) else: ""
+        var kutuphane = sonraki_kelime(mesaj, "unable to find library -l")
+        if kutuphane.length > 0 {
+            hata(dil.sec("'{kutuphane}' kütüphanesi bulunamadı. extern bloğundaki adı kontrol et.", "Library '{kutuphane}' was not found. Check the name in the extern block."))
+        }
+        var sembol = sonraki_kelime(mesaj, "undefined symbol: ")
+        if sembol.length > 0 {
+            hata(dil.sec("'{sembol}' fonksiyonu, extern'de yazılan kütüphanelerin hiçbirinde bulunamadı.\n   Adını ve hangi kütüphanede olduğunu kontrol et.", "Function '{sembol}' was not found in any of the libraries listed in extern.\n   Check its name and which library it is in."))
+        }
+        hata(dil.sec("clang derleyemedi (bu, derleyicimizde bir hata demek):\n{mesaj}", "clang could not compile (this means there is a bug in our compiler):\n{mesaj}"))
+    }
+}
+
+# ---------------------------------------------------------------------
+#  Ana program
+# ---------------------------------------------------------------------
+var komut = ortam("VASH_KOMUT")
+var kaynak = ortam("VASH_DOSYA")
+var tam_yol = ortam("VASH_TAM")
+var kok = ortam("VASH_KOK")
+var clang = ortam("VASH_CLANG")
+
+var json = ortam("VASH_JSON") is "1"
+
+# Mesaj dili: VASH_DIL=tr|en ayarı; yoksa --json için İngilizce, değilse Windows Türkçeyse Türkçe, değilse İngilizce
+var dil_ayari = ortam("VASH_DIL").lower()
+if dil_ayari is "tr" or dil_ayari is "en" {
+    dil.ayarla(dil_ayari)
+} else if json {
+    dil.ayarla("en")
+} else if _GetUserDefaultUILanguage() % 1024 is 31 {        # 31 (0x1F): Türkçe
+    dil.ayarla("tr")
+} else {
+    dil.ayarla("en")
+}
+# Kum havuzu ayarları (vash kum ... ya da VASH_KUM=1)
+if komut is "kum" or ortam("VASH_KUM") is "1" {
+    KUM_ACIK = true
+    moduller.kum_ayarla(true)
+    var ham = ortam("VASH_KUM_IZIN").replace("+", ",").replace(" ", ",").split(",")
+    repeat i from 1 to ham.length {
+        var iz = ham[i].trim().lower()
+        if iz.length > 0 {
+            if not tipler.IZINLER.has(iz) {
+                hata(dil.sec("'{iz}' diye bir izin yok. İzinler: files, net, system, screen, sound, time", "There is no permission called '{iz}'. Permissions: files, net, system, screen, sound, time"))
+            }
+            KUM_IZINLERI.add(iz)
+        }
+    }
+}
+
+var okunan = read_file(kaynak)
+if okunan is none {
+    var yok_mesaji = dil.sec("'{kaynak}' diye bir dosya yok.", "There is no file called '{kaynak}'.")
+    if komut is "check" and json {
+        print("\{\"ok\": false, \"file\": {json_metin(dosya_adi(kaynak))}, \"errors\": [\{\"stage\": \"file\", \"file\": {json_metin(dosya_adi(kaynak))}, \"line\": 0, \"column\": 0, \"message\": {json_metin(yok_mesaji)}, \"details\": \"\"\}]\}")
+        _exit(1)
+    }
+    hata(yok_mesaji)
+} else {
+    if not kaynak.ends_with(".vash") {
+        print(dil.sec("UYARI: Vash dosyalarının uzantısı .vash olmalı ('{kaynak}').", "WARNING: Vash files should have the .vash extension ('{kaynak}')."))
+    }
+    var kod = okunan
+    if kod.length > 0 and code(kod[1]) is 65279 {    # dosyanın başındaki görünmez BOM işareti
+        kod = kod[2 to kod.length]
+    }
+    var temel = kaynak
+    if kaynak.ends_with(".vash") {
+        temel = kaynak[1 to kaynak.length - 5]
+    }
+    if komut is "check" {
+        denetle(kod, kaynak, tam_yol, kok, json)
+    } else {
+        var ir = ir_uret(kod, klasor(tam_yol), kok)
+        if komut is "ir" {
+            print(ir)
+        } else {
+            exe_uret(ir, "{temel}.ll", "{temel}.exe", kok, clang)
+            if komut is "kum" {
+                var kum_temel = tam_yol
+                if tam_yol.ends_with(".vash") {
+                    kum_temel = tam_yol[1 to tam_yol.length - 5]
+                }
+                var saniye = int(ortam("VASH_KUM_SURE"), else: 30)
+                var kum_klasoru = ortam("VASH_KUM_KLASORU")
+                if kum_klasoru.length is 0 {
+                    kum_klasoru = klasor(tam_yol)
+                }
+                var sonuc = _vash_kum_calistir("\"{kum_temel}.exe\"{ortam("VASH_ARGUMANLAR")}", kum_klasoru, saniye * 1000)
+                if sonuc is -2 {
+                    print(dil.sec("\nKUM HAVUZU: süre doldu ({saniye} sn); program durduruldu.", "\nSANDBOX: time is up ({saniye} s); the program was stopped."))
+                    _exit(124)
+                }
+                if sonuc is -1 {
+                    hata(dil.sec("program başlatılamadı", "the program could not be started"))
+                }
+                _exit(sonuc)
+            }
+            if komut is "run" {
+                var tam_temel = tam_yol                # tam yolla çalıştır (Windows bazen bulunduğu klasöre bakmıyor)
+                if tam_yol.ends_with(".vash") {
+                    tam_temel = tam_yol[1 to tam_yol.length - 5]
+                }
+                _exit(calistir("\"{tam_temel}.exe\"{ortam("VASH_ARGUMANLAR")}"))
+            } else {
+                print(dil.sec("✓ {temel}.exe hazır", "✓ {temel}.exe ready"))
+            }
+        }
+    }
+}

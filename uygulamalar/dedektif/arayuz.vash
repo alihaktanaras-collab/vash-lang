@@ -1,0 +1,610 @@
+# arayuz: Vash uygulamalarının arayüz parçaları (vash_engine/arayuz.vash ile aynı) (her karede yeniden çizilir)
+import graphics
+import math
+
+# ---------- Renkler (koyu tema) ----------
+global var ZEMIN = graphics.rgb(24, 25, 30)
+global var PANEL = graphics.rgb(32, 33, 39)
+global var PANEL2 = graphics.rgb(39, 40, 47)
+global var CIZGI = graphics.rgb(50, 52, 61)
+global var ALAN = graphics.rgb(24, 25, 30)
+global var ALAN_CIZGI = graphics.rgb(58, 60, 70)
+global var YAZI = graphics.rgb(228, 230, 236)
+global var YAZI2 = graphics.rgb(160, 163, 177)
+global var SOLUK = graphics.rgb(110, 113, 126)
+global var VURGU = graphics.rgb(76, 141, 255)
+global var VURGU_ACIK = graphics.rgb(106, 160, 255)
+global var VURGU_ZEMIN = graphics.rgba(76, 141, 255, 40)
+global var TEHLIKE = graphics.rgb(255, 92, 92)
+global var USTUNDE = graphics.rgba(255, 255, 255, 14)
+
+# ---------- Simgeler (Segoe Fluent Icons) ----------
+global var S_OYNA = 59240
+global var S_DUR = 59162
+global var S_KAYDET = 59214
+global var S_EKLE = 59152
+global var S_SIL = 59213
+global var S_GERI = 59303
+global var S_ILERI = 59302
+global var S_RESIM = 60319
+global var S_YAZI = 59602
+global var S_KUTU = 59193
+global var S_AYAR = 59155
+global var S_DISA = 59181
+global var S_KOD = 59715
+global var S_ASAGI = 59149
+global var S_KAPAT = 59153
+global var S_KOPYA = 59592
+global var S_IZGARA = 59402
+global var S_KISI = 59259
+global var S_DUNYA = 59252
+global var S_YILDIZ = 59188
+global var S_ODAK = 59166
+global var S_GOZ = 59278
+global var S_GERISAR = 60318
+global var S_DURAKLAT = 59241
+global var S_KALKAN = 59928
+global var S_TAMAM = 59198
+global var S_UYARI = 59322
+global var S_KLASOR = 59575
+global var S_ARA = 59169
+global var S_YUKARI = 59210
+global var S_DISK = 60834
+global var S_YENILE = 59180
+global var S_PENCERE = 59559
+global var S_OYUN = 59388
+
+# ---------- Durum ----------
+global var FARE_X = 0.0
+global var FARE_Y = 0.0
+global var BASILDI = false
+global var BIRAKILDI = false
+global var BASILI = false
+global var TEKER = 0.0
+global var AKTIF = ""
+global var ODAK = ""
+global var TAMPON = ""
+global var KAYBEDEN = ""
+global var KAYBEDEN_TAMPON = ""
+global var IMLEC = 0
+global var ENGEL = false
+global var SURUKLE_X = 0.0
+global var SURUKLE_DEGER = 0.0
+global var MENU = ""
+global var MENU_X = 0.0
+global var MENU_Y = 0.0
+global var MENU_G = 0.0
+global var MENU_SECENEK: [text] = []
+global var MENU_SONUC = ""
+global var MENU_SECILEN = 0
+global var FONTLAR: {text: graphics.Font} = {}
+global var ZAMAN = 0.0
+
+fn baslat() {
+    use screen
+    use change FONTLAR
+    FONTLAR["n"] = graphics.load_font("C:/Windows/Fonts/segoeui.ttf", 17)
+    FONTLAR["k"] = graphics.load_font("C:/Windows/Fonts/seguisb.ttf", 17)
+    FONTLAR["b"] = graphics.load_font("C:/Windows/Fonts/seguisb.ttf", 22)
+    FONTLAR["s"] = graphics.load_font("C:/Windows/Fonts/segoeui.ttf", 14)
+    var simgeler: [text] = []
+    var kodlar = [S_OYNA, S_DUR, S_KAYDET, S_EKLE, S_SIL, S_GERI, S_ILERI, S_RESIM, S_YAZI, S_KUTU, S_AYAR, S_DISA, S_KOD, S_ASAGI, S_KAPAT, S_KOPYA, S_IZGARA, S_KISI, S_DUNYA, S_YILDIZ, S_ODAK, S_GOZ, S_GERISAR, S_DURAKLAT, S_KALKAN, S_TAMAM, S_UYARI, S_KLASOR, S_ARA, S_YUKARI, S_DISK, S_YENILE, S_PENCERE, S_OYUN]
+    repeat i from 1 to kodlar.length {
+        simgeler.add(char(kodlar[i]))
+    }
+    FONTLAR["i"] = graphics.load_font_letters("C:/Windows/Fonts/SegoeIcons.ttf", 16, simgeler.join(""))
+}
+
+# Her karenin başında
+fn kare_basi() {
+    use screen
+    use change FARE_X
+    use change FARE_Y
+    use change BASILDI
+    use change BIRAKILDI
+    use change BASILI
+    use change TEKER
+    use change ODAK
+    use change KAYBEDEN
+    use change KAYBEDEN_TAMPON
+    use change IMLEC
+    use change ENGEL
+    use change AKTIF
+    use change MENU
+    use change ZAMAN
+    use TAMPON
+    var f = graphics.mouse_position()
+    FARE_X = f.x
+    FARE_Y = f.y
+    BASILDI = graphics.mouse_pressed(graphics.MOUSE_LEFT)
+    BIRAKILDI = graphics.mouse_released(graphics.MOUSE_LEFT)
+    BASILI = graphics.mouse_button_down(graphics.MOUSE_LEFT)
+    TEKER = graphics.mouse_wheel()
+    ZAMAN = graphics.elapsed()
+    IMLEC = graphics.CURSOR_DEFAULT
+    KAYBEDEN = ""
+    if BASILDI and ODAK.length > 0 {
+        KAYBEDEN = ODAK
+        KAYBEDEN_TAMPON = TAMPON
+        ODAK = ""
+    }
+    ENGEL = false
+    if MENU.length > 0 {
+        if FARE_X >= MENU_X and FARE_X <= MENU_X + MENU_G and FARE_Y >= MENU_Y and FARE_Y <= MENU_Y + float(MENU_SECENEK.length) * 32.0 + 8.0 {
+            ENGEL = true
+        } else if BASILDI {
+            MENU = ""
+            ENGEL = true
+            BASILDI = false
+        }
+    }
+    if not BASILI and not BIRAKILDI {
+        AKTIF = ""
+    }
+}
+
+# Her karenin sonunda (açık menüyü en üste çizer)
+fn kare_sonu() {
+    use screen
+    use change MENU
+    use change MENU_SONUC
+    use change MENU_SECILEN
+    use change IMLEC
+    if MENU.length > 0 {
+        var h = float(MENU_SECENEK.length) * 32.0 + 8.0
+        graphics.draw_rounded(MENU_X + 2.0, MENU_Y + 4.0, MENU_G, h, 8.0, graphics.rgba(0, 0, 0, 90))
+        graphics.draw_rounded(MENU_X, MENU_Y, MENU_G, h, 8.0, PANEL2)
+        graphics.draw_rounded_outline(MENU_X, MENU_Y, MENU_G, h, 8.0, 1.0, ALAN_CIZGI)
+        repeat i from 1 to MENU_SECENEK.length {
+            var y = MENU_Y + 4.0 + float(i - 1) * 32.0
+            if FARE_X >= MENU_X and FARE_X <= MENU_X + MENU_G and FARE_Y >= y and FARE_Y < y + 32.0 {
+                graphics.draw_rounded(MENU_X + 4.0, y, MENU_G - 8.0, 32.0, 6.0, VURGU_ZEMIN)
+                IMLEC = graphics.CURSOR_HAND
+                if graphics.mouse_pressed(graphics.MOUSE_LEFT) {
+                    MENU_SONUC = MENU
+                    MENU_SECILEN = i
+                    MENU = ""
+                }
+            }
+            yazi(MENU_SECENEK[i], MENU_X + 14.0, y + 6.0, YAZI)
+        }
+    }
+    graphics.set_cursor(IMLEC)
+}
+
+fn yazi_yaziliyor() -> bool {
+    use ODAK
+    return ODAK.length > 0
+}
+
+fn fare_serbest() -> bool {
+    use ENGEL
+    use AKTIF
+    return not ENGEL and AKTIF.length is 0
+}
+
+fn icinde(x: float, y: float, w: float, h: float) -> bool {
+    use FARE_X
+    use FARE_Y
+    return FARE_X >= x and FARE_X < x + w and FARE_Y >= y and FARE_Y < y + h
+}
+
+# ---------- Yazı ----------
+fn _font(tur: text) -> graphics.Font {
+    use screen
+    use FONTLAR
+    if FONTLAR.has(tur) {
+        return FONTLAR[tur]
+    }
+    return graphics.default_font()
+}
+
+fn _boy(tur: text) -> float {
+    if tur is "b" {
+        return 22.0
+    }
+    if tur is "s" {
+        return 14.0
+    }
+    if tur is "i" {
+        return 16.0
+    }
+    return 17.0
+}
+
+fn yazi(t: text, x: float, y: float, renk: graphics.Color) {
+    use screen
+    graphics.draw_text_font(_font("n"), t, math.round(x), math.round(y), 17.0, renk)
+}
+
+fn yazi_tur(t: text, tur: text, x: float, y: float, renk: graphics.Color) {
+    use screen
+    graphics.draw_text_font(_font(tur), t, math.round(x), math.round(y), _boy(tur), renk)
+}
+
+fn genislik(t: text, tur: text) -> float {
+    use screen
+    return graphics.text_width_font(_font(tur), t, _boy(tur))
+}
+
+fn simge(kod: int, x: float, y: float, renk: graphics.Color) {
+    use screen
+    graphics.draw_text_font(_font("i"), char(kod), math.round(x), math.round(y), 16.0, renk)
+}
+
+# ---------- Düğmeler ----------
+# tur: "ana" (mavi), "normal", "hayalet" (çerçevesiz), "tehlike"
+fn dugme(id: text, etiket: text, sim: int, x: float, y: float, w: float, h: float, tur: text) -> bool {
+    use screen
+    use change AKTIF
+    use change IMLEC
+    var ustte = icinde(x, y, w, h) and not ENGEL
+    var zemin = PANEL2
+    var yr = YAZI
+    if tur is "ana" {
+        zemin = VURGU
+        if ustte {
+            zemin = VURGU_ACIK
+        }
+        yr = graphics.WHITE
+    } else if tur is "tehlike" {
+        zemin = TEHLIKE
+        yr = graphics.WHITE
+    } else if tur is "hayalet" {
+        zemin = graphics.rgba(0, 0, 0, 0)
+        if ustte {
+            zemin = USTUNDE
+        }
+        yr = YAZI2
+        if ustte {
+            yr = YAZI
+        }
+    } else if ustte {
+        zemin = graphics.rgb(48, 50, 58)
+    }
+    graphics.draw_rounded(x, y, w, h, 6.0, zemin)
+    if tur is "normal" {
+        graphics.draw_rounded_outline(x, y, w, h, 6.0, 1.0, CIZGI)
+    }
+    var ic = genislik(etiket, "k")
+    if sim > 0 {
+        if etiket.length > 0 {
+            ic = ic + 24.0
+        } else {
+            ic = 16.0
+        }
+    }
+    var bx = x + (w - ic) / 2.0
+    if sim > 0 {
+        simge(sim, bx, y + (h - 16.0) / 2.0, yr)
+        bx = bx + 24.0
+    }
+    if etiket.length > 0 {
+        yazi_tur(etiket, "k", bx, y + (h - 22.0) / 2.0, yr)
+    }
+    if ustte {
+        IMLEC = graphics.CURSOR_HAND
+        if BASILDI {
+            AKTIF = id
+        }
+    }
+    return ustte and BASILDI
+}
+
+# ---------- Metin kutusu ----------
+fn _kutu_ciz(x: float, y: float, w: float, h: float, odakta: bool, ustte: bool) {
+    use screen
+    graphics.draw_rounded(x, y, w, h, 6.0, ALAN)
+    if odakta {
+        graphics.draw_rounded_outline(x, y, w, h, 6.0, 1.5, VURGU)
+    } else if ustte {
+        graphics.draw_rounded_outline(x, y, w, h, 6.0, 1.0, graphics.rgb(80, 83, 96))
+    } else {
+        graphics.draw_rounded_outline(x, y, w, h, 6.0, 1.0, ALAN_CIZGI)
+    }
+}
+
+fn _yazma() -> bool {
+    use screen
+    use change TAMPON
+    use change ODAK
+    repeat while true {
+        var c = graphics.typed_char()
+        if c.length is 0 {
+            stop
+        }
+        TAMPON = "{TAMPON}{c}"
+    }
+    if graphics.key_pressed(graphics.KEY_BACKSPACE) or graphics.key_repeated(graphics.KEY_BACKSPACE) {
+        if TAMPON.length > 1 {
+            TAMPON = TAMPON[1 to TAMPON.length - 1]
+        } else {
+            TAMPON = ""
+        }
+    }
+    return graphics.key_pressed(graphics.KEY_ENTER) or graphics.key_pressed(graphics.KEY_TAB)
+}
+
+# Değiştirilince yeni metni, değilse eskisini döndürür
+fn metin_kutusu(id: text, x: float, y: float, w: float, h: float, deger: text) -> text {
+    use screen
+    return _metin_kutusu(id, x, y, w, h, deger, 10.0)
+}
+
+fn _metin_kutusu(id: text, x: float, y: float, w: float, h: float, deger: text, ic: float) -> text {
+    use screen
+    use change ODAK
+    use change TAMPON
+    use change IMLEC
+    var ustte = icinde(x, y, w, h) and not ENGEL
+    if ustte {
+        IMLEC = graphics.CURSOR_TEXT
+    }
+    if KAYBEDEN is id {
+        if ustte {
+            ODAK = id
+        } else {
+            _kutu_ciz(x, y, w, h, false, ustte)
+            _kirpili_yazi(KAYBEDEN_TAMPON, x, y, w, h, false, ic)
+            return KAYBEDEN_TAMPON
+        }
+    } else if BASILDI and ustte and ODAK.length is 0 {
+        ODAK = id
+        TAMPON = deger
+    }
+    if ODAK is id {
+        var bitti = _yazma()
+        _kutu_ciz(x, y, w, h, true, ustte)
+        _kirpili_yazi(TAMPON, x, y, w, h, true, ic)
+        if graphics.key_pressed(graphics.KEY_ESCAPE) {
+            ODAK = ""
+            return deger
+        }
+        if bitti {
+            ODAK = ""
+            return TAMPON
+        }
+        return deger
+    }
+    _kutu_ciz(x, y, w, h, false, ustte)
+    _kirpili_yazi(deger, x, y, w, h, false, ic)
+    return deger
+}
+
+fn _kirpili_yazi(t: text, x: float, y: float, w: float, h: float, imlecli: bool, ic: float) {
+    use screen
+    var tg = genislik(t, "n")
+    var kay = 0.0
+    if tg > w - ic - 10.0 {
+        kay = tg - (w - ic - 10.0)
+    }
+    graphics.clip_begin(x + 2.0, y, w - 4.0, h)
+    yazi(t, x + ic - kay, y + (h - 22.0) / 2.0, YAZI)
+    if imlecli and math.fmod(ZAMAN, 1.0) < 0.55 {
+        var ix = x + ic - kay + tg + 1.0
+        graphics.draw_rectangle(ix, y + 7.0, 1.5, h - 14.0, VURGU_ACIK)
+    }
+    graphics.clip_end()
+}
+
+# ---------- Sayı kutusu: soldaki harfi sürükleyerek de değişir ----------
+fn _sayi_metni(v: float) -> text {
+    if v is math.floor(v) and math.abs(v) < 1000000000.0 {
+        return text(int(v))
+    }
+    return text(math.round(v * 100.0) / 100.0)
+}
+
+fn sayi_kutusu(id: text, harf: text, x: float, y: float, w: float, h: float, deger: float, adim: float) -> float {
+    use screen
+    use change AKTIF
+    use change IMLEC
+    use change SURUKLE_X
+    use change SURUKLE_DEGER
+    var hg = 26.0
+    var surukle_id = "{id}#s"
+    var hu = icinde(x, y, hg, h) and not ENGEL
+    if hu {
+        IMLEC = graphics.CURSOR_RESIZE_LEFT_RIGHT
+        if BASILDI {
+            AKTIF = surukle_id
+            SURUKLE_X = FARE_X
+            SURUKLE_DEGER = deger
+        }
+    }
+    var sonuc = deger
+    if AKTIF is surukle_id and BASILI {
+        IMLEC = graphics.CURSOR_RESIZE_LEFT_RIGHT
+        sonuc = SURUKLE_DEGER + math.round((FARE_X - SURUKLE_X) / 2.0) * adim
+    }
+    var t = _metin_kutusu(id, x, y, w, h, _sayi_metni(sonuc), hg + 6.0)
+    var renk = SOLUK
+    if hu or AKTIF is surukle_id {
+        renk = VURGU_ACIK
+    }
+    yazi_tur(harf, "s", x + 9.0, y + (h - 18.0) / 2.0, renk)
+    if AKTIF is surukle_id {
+        return sonuc
+    }
+    var yeni = float(t, else: sonuc)
+    return yeni
+}
+
+# ---------- Aç/kapa anahtarı ----------
+fn anahtar(id: text, etiket: text, x: float, y: float, w: float, deger: bool) -> bool {
+    use screen
+    use change IMLEC
+    use change AKTIF
+    var ustte = icinde(x, y, w, 28.0) and not ENGEL
+    yazi(etiket, x, y + 3.0, YAZI2)
+    var ax = x + w - 38.0
+    var zemin = graphics.rgb(58, 60, 70)
+    if deger {
+        zemin = VURGU
+    }
+    graphics.draw_rounded(ax, y + 5.0, 38.0, 20.0, 10.0, zemin)
+    var tx = ax + 10.0
+    if deger {
+        tx = ax + 28.0
+    }
+    graphics.draw_circle(tx, y + 15.0, 7.0, graphics.WHITE)
+    if ustte {
+        IMLEC = graphics.CURSOR_HAND
+        if BASILDI {
+            AKTIF = id
+            return not deger
+        }
+    }
+    return deger
+}
+
+# ---------- Açılır liste: seçilen sırayı döndürür (1'den) ----------
+fn secim(id: text, x: float, y: float, w: float, h: float, secenekler: [text], secili: int) -> int {
+    use screen
+    use change MENU
+    use change MENU_X
+    use change MENU_Y
+    use change MENU_G
+    use change MENU_SECENEK
+    use change MENU_SONUC
+    use change IMLEC
+    use change AKTIF
+    var sonuc = secili
+    if MENU_SONUC is id {
+        sonuc = MENU_SECILEN
+        MENU_SONUC = ""
+    }
+    var ustte = icinde(x, y, w, h) and not ENGEL
+    _kutu_ciz(x, y, w, h, MENU is id, ustte)
+    var t = ""
+    if sonuc >= 1 and sonuc <= secenekler.length {
+        t = secenekler[sonuc]
+    }
+    graphics.clip_begin(x, y, w - 30.0, h)
+    yazi(t, x + 10.0, y + (h - 22.0) / 2.0, YAZI)
+    graphics.clip_end()
+    simge(S_ASAGI, x + w - 26.0, y + (h - 16.0) / 2.0, YAZI2)
+    if ustte {
+        IMLEC = graphics.CURSOR_HAND
+        if BASILDI {
+            AKTIF = id
+            if MENU is id {
+                MENU = ""
+            } else {
+                MENU = id
+                MENU_X = x
+                MENU_Y = y + h + 4.0
+                MENU_G = math.max(w, 180.0)
+                MENU_SECENEK = secenekler
+            }
+        }
+    }
+    return sonuc
+}
+
+# Bir düğmenin altında menü aç (sonuç: menu_sonucu)
+fn menu_ac(id: text, x: float, y: float, w: float, secenekler: [text]) {
+    use change MENU
+    use change MENU_X
+    use change MENU_Y
+    use change MENU_G
+    use change MENU_SECENEK
+    MENU = id
+    MENU_X = x
+    MENU_Y = y
+    MENU_G = w
+    MENU_SECENEK = secenekler
+}
+
+fn menu_sonucu(id: text) -> int {
+    use change MENU_SONUC
+    if MENU_SONUC is id {
+        MENU_SONUC = ""
+        return MENU_SECILEN
+    }
+    return 0
+}
+
+# ---------- Renk seçici: hazır renkler + kod ----------
+global var PALET = ["#ffffff", "#f4f4f4", "#94b0c2", "#566c86", "#1a1c2c", "#b13e53", "#ef7d57", "#ffcd75", "#a7f070", "#38b764", "#257179", "#41a6f6", "#3b5dc9", "#5d275d", "#ffe9a8", "#ff5a5a"]
+
+fn renk_secici(id: text, x: float, y: float, w: float, deger: text, renkler: [graphics.Color]) -> text {
+    use screen
+    use change IMLEC
+    use change AKTIF
+    var sonuc = deger
+    var kare = 22.0
+    var bosluk = (w - kare * 8.0) / 7.0
+    repeat i from 1 to PALET.length {
+        var sx = x + float((i - 1) % 8) * (kare + bosluk)
+        var sy = y + float((i - 1) // 8) * (kare + 8.0)
+        graphics.draw_rounded(sx, sy, kare, kare, 5.0, renkler[i])
+        if PALET[i] is deger {
+            graphics.draw_rounded_outline(sx - 3.0, sy - 3.0, kare + 6.0, kare + 6.0, 7.0, 2.0, VURGU)
+        } else {
+            graphics.draw_rounded_outline(sx, sy, kare, kare, 5.0, 1.0, graphics.rgba(255, 255, 255, 30))
+        }
+        if icinde(sx, sy, kare, kare) and not ENGEL {
+            IMLEC = graphics.CURSOR_HAND
+            if BASILDI {
+                AKTIF = "{id}{i}"
+                sonuc = PALET[i]
+            }
+        }
+    }
+    return metin_kutusu("{id}#k", x, y + 64.0, w, 32.0, sonuc)
+}
+
+# ---------- Panel parçaları ----------
+fn baslik(t: text, x: float, y: float) {
+    use screen
+    yazi_tur(t.upper("tr"), "s", x, y, SOLUK)
+}
+
+fn etiket(t: text, x: float, y: float) {
+    use screen
+    yazi(t, x, y, YAZI2)
+}
+
+fn ayrac(x: float, y: float, w: float) {
+    use screen
+    graphics.draw_rectangle(x, y, w, 1.0, CIZGI)
+}
+
+fn imlec(n: int) {
+    use change IMLEC
+    IMLEC = n
+}
+
+fn aktif(id: text) {
+    use change AKTIF
+    AKTIF = id
+}
+
+# ---------- Kaydırıcı: 1 .. en_fazla arası bir değer ----------
+fn kaydirici(id: text, x: float, y: float, w: float, deger: float, en_fazla: float) -> float {
+    use screen
+    use change AKTIF
+    use change IMLEC
+    var oran = 0.0
+    if en_fazla > 1.0 {
+        oran = math.clamp((deger - 1.0) / (en_fazla - 1.0), 0.0, 1.0)
+    }
+    graphics.draw_rounded(x, y - 3.0, w, 6.0, 3.0, graphics.rgb(58, 60, 70))
+    graphics.draw_rounded(x, y - 3.0, w * oran, 6.0, 3.0, VURGU)
+    var ustte = icinde(x - 10.0, y - 14.0, w + 20.0, 28.0) and not ENGEL
+    var yaricap = 7.0
+    if ustte or AKTIF is id {
+        yaricap = 9.0
+        IMLEC = graphics.CURSOR_HAND
+    }
+    graphics.draw_circle(x + w * oran, y, yaricap, graphics.WHITE)
+    if ustte and BASILDI {
+        AKTIF = id
+    }
+    if AKTIF is id and BASILI {
+        var o = math.clamp((FARE_X - x) / w, 0.0, 1.0)
+        return 1.0 + o * math.max(0.0, en_fazla - 1.0)
+    }
+    return deger
+}

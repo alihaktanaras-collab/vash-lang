@@ -1,0 +1,4 @@
+var toplam = 0
+var ekle = fn(x: int) {
+    toplam = toplam + x
+}

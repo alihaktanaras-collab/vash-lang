@@ -1,0 +1,31 @@
+# Sunucu ve istemci aynı programda: istemciler arka planda (start), sunucu ana döngüde
+import http
+
+fn sor(yol: text) -> text {
+    use net
+    var c = http.get("http://127.0.0.1:8092{yol}")
+    if c is none {
+        return "hata: {http.error()}"
+    }
+    return "{c.status} {c.body}"
+}
+
+var sunucu = http.listen(8092) else: http.Server(id: 0, port: 0)
+var isler: [task[text]] = []
+repeat i from 1 to 20 {
+    isler.add(start sor("/kare?n={i}"))
+}
+var cevaplanan = 0
+repeat while cevaplanan < 20 {
+    var istek = sunucu.next()
+    var n = int(istek.param("n"), else: 0)
+    istek.reply(200, "{n * n}")
+    cevaplanan = cevaplanan + 1
+}
+var toplam = 0
+repeat i from 1 to isler.length {
+    var c = isler[i].wait()
+    toplam = toplam + int(c.split(" ")[2], else: 0)
+}
+print("20 istemci, kareler toplamı:", toplam)
+sunucu.close()

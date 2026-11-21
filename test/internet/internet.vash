@@ -1,0 +1,27 @@
+# Gerçek internete istekler (HTTPS dahil)
+import http
+import json
+
+fn dene(adres: text) -> text {
+    use net
+    var c = http.get(adres)
+    if c is none {
+        return "{adres} → olmadı: {http.error()}"
+    }
+    return "{adres} → {c.status}, {c.body.length} harf, tür: {c.headers.get("content-type", else: "?")}"
+}
+
+var adresler = ["https://example.com/", "https://httpbin.org/get?ad=Vash", "http://example.com/", "https://www.google.com/", "https://olmayan-bir-alan-adi-vash.invalid/"]
+var isler: [task[text]] = []
+repeat i from 1 to adresler.length {
+    isler.add(start dene(adresler[i]))
+}
+repeat i from 1 to isler.length {
+    print(isler[i].wait())
+}
+
+var p = http.post("https://httpbin.org/post", "\{\"dil\": \"Vash\", \"sürüm\": 0.1\}", "application/json")
+if p is not none {
+    var j = json.parse(p.body) else: json.null()
+    print("POST:", p.status, json.stringify(json.get(j, "json")))
+}

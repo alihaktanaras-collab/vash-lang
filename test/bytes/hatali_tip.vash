@@ -1,0 +1,2 @@
+var b = bytes(2)
+b[1] = "a"

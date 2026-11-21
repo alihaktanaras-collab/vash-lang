@@ -1,0 +1,390 @@
+# unity: bir Unity projesinin röntgeni
+#   var r = unity.rontgen("C:/Projeler/Oyunum", ilerleme_kanali, 16)
+import fs
+import tarama
+
+type Varlik {
+    yol: text                       # "Assets/..." biçiminde
+    boyut: int
+    tur: text = "diger"             # resim, model, ses, script, sahne, prefab, materyal, animasyon, yazi_tipi, shader, video, diger
+    guid: text = ""
+    kullanilmiyor: bool = false
+    satir: int = 0
+    piksel: int = 0                 # resmin uzun kenarı
+    en_buyuk_doku: int = 0          # .meta'daki maxTextureSize
+    sikistirmasiz: bool = false
+    uyari: text = ""
+}
+
+type Parca {
+    varliklar: [Varlik] = []
+    referanslar: {text: bool} = {}
+}
+
+type Rapor {
+    proje: text
+    surum: text = ""
+    toplam: int = 0
+    assets: int = 0
+    library: int = 0
+    diger_klasorler: int = 0
+    varliklar: [Varlik] = []
+    kategori_boyut: {text: int} = {}
+    kategori_sayi: {text: int} = {}
+    script_satir: int = 0
+    kullanilmayan_sayi: int = 0
+    kullanilmayan_boyut: int = 0
+    uyari_sayi: int = 0
+    sure: float = 0.0
+    hata: text = ""
+}
+
+global var YAML = ["prefab", "unity", "mat", "asset", "controller", "anim", "overridecontroller", "playable", "spriteatlas", "spriteatlasv2", "lighting", "mixer", "signal", "physicmaterial", "physicsmaterial2d", "guiskin", "flare", "renderTexture", "rendertexture", "brush", "terrainlayer", "mask", "preset", "fontsettings", "shadervariants", "giparams", "cubemap", "shadergraph", "shadersubgraph", "vfx", "inputactions", "asmdef", "asmref", "uxml", "uss", "tss"]
+
+fn tur_bul(uzanti: text) -> text {
+    var u = uzanti
+    if u is "png" or u is "jpg" or u is "jpeg" or u is "psd" or u is "tga" or u is "tif" or u is "tiff" or u is "exr" or u is "hdr" or u is "bmp" or u is "gif" or u is "psb" {
+        return "resim"
+    }
+    if u is "fbx" or u is "obj" or u is "blend" or u is "dae" or u is "3ds" or u is "max" or u is "ma" or u is "mb" or u is "gltf" or u is "glb" {
+        return "model"
+    }
+    if u is "wav" or u is "mp3" or u is "ogg" or u is "aif" or u is "aiff" or u is "flac" or u is "xm" or u is "mod" or u is "it" {
+        return "ses"
+    }
+    if u is "cs" {
+        return "script"
+    }
+    if u is "unity" {
+        return "sahne"
+    }
+    if u is "prefab" {
+        return "prefab"
+    }
+    if u is "mat" {
+        return "materyal"
+    }
+    if u is "anim" or u is "controller" or u is "overridecontroller" {
+        return "animasyon"
+    }
+    if u is "ttf" or u is "otf" or u is "fontsettings" {
+        return "yazi_tipi"
+    }
+    if u is "shader" or u is "shadergraph" or u is "shadersubgraph" or u is "hlsl" or u is "cginc" or u is "compute" {
+        return "shader"
+    }
+    if u is "mp4" or u is "mov" or u is "webm" or u is "avi" {
+        return "video"
+    }
+    return "diger"
+}
+
+fn tur_adi(t: text) -> text {
+    if t is "resim" { return "Resimler" }
+    if t is "model" { return "Modeller" }
+    if t is "ses" { return "Sesler" }
+    if t is "script" { return "Scriptler" }
+    if t is "sahne" { return "Sahneler" }
+    if t is "prefab" { return "Prefablar" }
+    if t is "materyal" { return "Materyaller" }
+    if t is "animasyon" { return "Animasyonlar" }
+    if t is "yazi_tipi" { return "Yazı tipleri" }
+    if t is "shader" { return "Shaderlar" }
+    if t is "video" { return "Videolar" }
+    return "Diğer"
+}
+
+fn _yaml_mi(uzanti: text) -> bool {
+    repeat i from 1 to YAML.length {
+        if YAML[i] is uzanti {
+            return true
+        }
+    }
+    return false
+}
+
+# Metindeki bütün "guid: xxxx", "\"guid\": \"xxxx\"" ve "GUID:xxxx" kimlikleri
+fn _guidler(icerik: text) -> [text] {
+    var s: [text] = []
+    var kaliplar = ["guid: ", "\"guid\": \"", "\"guid\":\"", "GUID:"]
+    repeat k from 1 to kaliplar.length {
+        var parcalar = icerik.split(kaliplar[k])
+        repeat i from 2 to parcalar.length {
+            var p = parcalar[i]
+            if p.length >= 32 {
+                var g = p[1 to 32]
+                if g is not "00000000000000000000000000000000" {
+                    s.add(g)
+                }
+            }
+        }
+    }
+    return s
+}
+
+fn _guid_oku(meta: text) -> text {
+    var p = meta.split("guid: ")
+    if p.length < 2 or p[2].length < 32 {
+        return ""
+    }
+    return p[2][1 to 32]
+}
+
+fn _sayi_al(meta: text, anahtar: text) -> int {
+    var p = meta.split(anahtar)
+    if p.length < 2 {
+        return 0
+    }
+    var t = p[2].split("\n")[1].trim()
+    return int(t, else: 0)
+}
+
+# Resmin piksel boyutu (uzun kenar): PNG ve PSD başlığından
+fn _resim_boyu(yol: text, uzanti: text) -> int {
+    use files
+    var b = fs.read_head(yol, 32)
+    if uzanti is "png" and b.length >= 24 {
+        var g = ((b[17] * 256 + b[18]) * 256 + b[19]) * 256 + b[20]
+        var y = ((b[21] * 256 + b[22]) * 256 + b[23]) * 256 + b[24]
+        if g > y {
+            return g
+        }
+        return y
+    }
+    if (uzanti is "psd" or uzanti is "psb") and b.length >= 22 {
+        var y = ((b[15] * 256 + b[16]) * 256 + b[17]) * 256 + b[18]
+        var g = ((b[19] * 256 + b[20]) * 256 + b[21]) * 256 + b[22]
+        if g > y {
+            return g
+        }
+        return y
+    }
+    if uzanti is "tga" and b.length >= 16 {
+        var g = b[13] + b[14] * 256
+        var y = b[15] + b[16] * 256
+        if g > y {
+            return g
+        }
+        return y
+    }
+    return 0
+}
+
+# İşçi: bir grup varlığı incele + referansları topla
+fn incele(proje: text, yollar: [text], boyutlar: [int], ilerleme: channel[int]) -> Parca {
+    use files
+    var p = Parca()
+    repeat i from 1 to yollar.length {
+        var goreli = yollar[i]
+        var tam = fs.join(proje, goreli.replace("/", "\\"))
+        var uz = fs.extension(goreli)
+        var v = Varlik(yol: goreli, boyut: boyutlar[i], tur: tur_bul(uz))
+        var meta = read_file("{tam}.meta") else: ""
+        v.guid = _guid_oku(meta)
+        if v.tur is "resim" {
+            v.piksel = _resim_boyu(tam, uz)
+            v.en_buyuk_doku = _sayi_al(meta, "maxTextureSize: ")
+            v.sikistirmasiz = _sayi_al(meta, "textureCompression: ") is 0 and meta.contains("textureCompression: 0")
+            var etkin = v.piksel
+            if v.en_buyuk_doku > 0 and v.en_buyuk_doku < etkin {
+                etkin = v.en_buyuk_doku
+            }
+            if etkin > 2048 {
+                v.uyari = "Telefonda çok büyük: {etkin} px (2048'e indirilebilir)"
+            } else if v.sikistirmasiz and v.boyut > 1048576 {
+                v.uyari = "Sıkıştırılmamış doku: belleği yorar"
+            }
+        } else if v.tur is "ses" and uz is "wav" and v.boyut > 2097152 {
+            v.uyari = "Büyük WAV: Vorbis'e sıkıştırılabilir"
+        } else if v.tur is "model" and v.boyut > 31457280 {
+            v.uyari = "Çok büyük model: sadeleştirilebilir"
+        } else if v.tur is "video" and v.boyut > 52428800 {
+            v.uyari = "Büyük video: oyunun boyutunu şişirir"
+        }
+        if v.tur is "script" {
+            var icerik = read_file(tam) else: ""
+            v.satir = icerik.split("\n").length
+        }
+        if _yaml_mi(uz) {
+            var icerik = read_file(tam) else: ""
+            var gl = _guidler(icerik)
+            repeat k from 1 to gl.length {
+                p.referanslar[gl[k]] = true
+            }
+        }
+        p.varliklar.add(v)
+        if i % 50 is 0 {
+            ilerleme.send(50)
+        }
+    }
+    ilerleme.send(yollar.length % 50)
+    return p
+}
+
+# Assets'in altındaki bütün dosyalar (meta hariç)
+fn _dosyalari_topla(proje: text) -> [tarama.Dosya] {
+    use files
+    var sonuc: [tarama.Dosya] = []
+    var yigin = ["Assets"]
+    repeat while yigin.length > 0 {
+        var goreli = yigin[yigin.length]
+        yigin.remove(yigin.length)
+        var l = fs.list(fs.join(proje, goreli.replace("/", "\\")))
+        repeat i from 1 to l.length {
+            var e = l[i]
+            if e.is_dir {
+                if not e.is_link {
+                    yigin.add("{goreli}/{e.name}")
+                }
+            } else if not e.name.ends_with(".meta") {
+                sonuc.add(tarama.Dosya(yol: "{goreli}/{e.name}", boyut: e.size, zaman: e.modified))
+            }
+        }
+    }
+    return sonuc
+}
+
+# Bu yoldaki varlık "kullanılmıyor" denetiminden muaf mı? (kodla yüklenebilenler)
+fn _muaf_mi(v: Varlik) -> bool {
+    var y = "/{v.yol}/"
+    if v.tur is "script" or v.tur is "shader" or v.tur is "sahne" {
+        return true
+    }
+    var muaf = ["/Resources/", "/StreamingAssets/", "/Editor/", "/Plugins/", "/Gizmos/", "/Editor Default Resources/", "/AddressableAssetsData/", "/TextMesh Pro/", "/Settings/"]
+    repeat i from 1 to muaf.length {
+        if y.contains(muaf[i]) {
+            return true
+        }
+    }
+    var ad = fs.name(v.yol)
+    if ad.starts_with("Lightmap-") or ad.starts_with("ReflectionProbe-") or ad.starts_with("LightingData") or ad.starts_with("NavMesh") {
+        return true                              # sahnenin ikili ışık/navigasyon verisi kullanır
+    }
+    var uz = fs.extension(v.yol)
+    if uz is "asmdef" or uz is "asmref" or uz is "dll" or uz is "so" or uz is "aar" or uz is "jar" or uz is "md" or uz is "txt" or uz is "json" or uz is "xml" or uz is "rsp" or uz is "inputactions" or uz is "uxml" or uz is "uss" {
+        return true
+    }
+    return v.guid.length is 0
+}
+
+fn rontgen(proje: text, ilerleme: channel[int], iscisi: int) -> Rapor {
+    use files
+    var basla = time()
+    var r = Rapor(proje: proje)
+    var surum = read_file(fs.join(proje, "ProjectSettings\\ProjectVersion.txt")) else: ""
+    r.surum = surum.split("\n")[1].replace("m_EditorVersion: ", "").trim()
+    # klasör boyutları (çok çekirdekli disk taraması)
+    var bos = channel[int]()
+    var t = tarama.tara(proje, bos, iscisi)
+    r.toplam = t.klasorler[1].boyut
+    var c = tarama.cocuklari(t, 1)
+    repeat i from 1 to c.length {
+        var k = t.klasorler[c[i]]
+        if k.ad is "Assets" {
+            r.assets = k.boyut
+        } else if k.ad is "Library" {
+            r.library = k.boyut
+        } else {
+            r.diger_klasorler = r.diger_klasorler + k.boyut
+        }
+    }
+    # varlıkları işçilere böl
+    var dosyalar = _dosyalari_topla(proje)
+    var gruplar: [[text]] = []
+    var gboyut: [[int]] = []
+    repeat k from 1 to iscisi {
+        gruplar.add([])
+        gboyut.add([])
+    }
+    repeat i from 1 to dosyalar.length {
+        var k = (i - 1) % iscisi + 1
+        gruplar[k].add(dosyalar[i].yol)
+        gboyut[k].add(dosyalar[i].boyut)
+    }
+    var isler: [task[Parca]] = []
+    repeat k from 1 to iscisi {
+        isler.add(start incele(proje, gruplar[k], gboyut[k], ilerleme))
+    }
+    var referanslar: {text: bool} = {}
+    repeat k from 1 to isler.length {
+        var p = isler[k].wait()
+        repeat i from 1 to p.varliklar.length {
+            r.varliklar.add(p.varliklar[i])
+        }
+        var anahtarlar = p.referanslar.keys()
+        repeat i from 1 to anahtarlar.length {
+            referanslar[anahtarlar[i]] = true
+        }
+    }
+    # proje ayarlarındaki referanslar (build'deki sahneler, grafik ayarları...)
+    var ayarlar = fs.list(fs.join(proje, "ProjectSettings"))
+    repeat i from 1 to ayarlar.length {
+        if ayarlar[i].name.ends_with(".asset") {
+            var icerik = read_file(fs.join(fs.join(proje, "ProjectSettings"), ayarlar[i].name)) else: ""
+            var gl = _guidler(icerik)
+            repeat k from 1 to gl.length {
+                referanslar[gl[k]] = true
+            }
+        }
+    }
+    # özet
+    repeat i from 1 to r.varliklar.length {
+        var v = r.varliklar[i]
+        r.kategori_boyut[v.tur] = r.kategori_boyut.get(v.tur, else: 0) + v.boyut
+        r.kategori_sayi[v.tur] = r.kategori_sayi.get(v.tur, else: 0) + 1
+        r.script_satir = r.script_satir + v.satir
+        if not _muaf_mi(v) and not referanslar.has(v.guid) {
+            r.varliklar[i].kullanilmiyor = true
+            r.kullanilmayan_sayi = r.kullanilmayan_sayi + 1
+            r.kullanilmayan_boyut = r.kullanilmayan_boyut + v.boyut
+        }
+        if v.uyari.length > 0 {
+            r.uyari_sayi = r.uyari_sayi + 1
+        }
+    }
+    r.varliklar.sort(by: fn(a, b) => a.boyut > b.boyut)
+    r.sure = time() - basla
+    return r
+}
+
+# Bir klasörün altındaki Unity projeleri (en fazla 'derinlik' kat)
+fn projeleri_bul(kok: text, derinlik: int) -> [text] {
+    use files
+    var sonuc: [text] = []
+    var yigin = [kok]
+    var katlar = [0]
+    repeat while yigin.length > 0 {
+        var yol = yigin[yigin.length]
+        var kat = katlar[katlar.length]
+        yigin.remove(yigin.length)
+        katlar.remove(katlar.length)
+        var l = fs.list(yol)
+        var assets = false
+        var ayarlar = false
+        var paketler = false
+        repeat i from 1 to l.length {
+            if l[i].is_dir {
+                if l[i].name is "Assets" {
+                    assets = true
+                } else if l[i].name is "ProjectSettings" {
+                    ayarlar = true
+                } else if l[i].name is "Packages" {
+                    paketler = true
+                }
+            }
+        }
+        if assets and ayarlar and paketler {
+            sonuc.add(yol)
+        } else if kat < derinlik {
+            repeat i from 1 to l.length {
+                var e = l[i]
+                if e.is_dir and not e.is_link and not e.name.starts_with(".") and e.name is not "AppData" and e.name is not "node_modules" and e.name is not "Library" {
+                    yigin.add(fs.join(yol, e.name))
+                    katlar.add(kat + 1)
+                }
+            }
+        }
+    }
+    sonuc.sort()
+    return sonuc
+}

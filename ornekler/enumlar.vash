@@ -1,0 +1,68 @@
+# enum: birden çok çeşidi olan değerler     match: hangi çeşit olduğuna göre dallan
+
+# --- 1) Ödeme: her çeşidin kendi bilgisi var ---
+enum Odeme {
+    Nakit
+    Kart(no: text, taksit: int)
+    Havale(iban: text, banka: text)
+}
+
+fn aciklama(o: Odeme, tutar: float) -> text {
+    match o {
+        Nakit { return "{tutar} TL nakit" }
+        Kart(no, taksit) {
+            var son4 = no[no.length - 3 to no.length]
+            return "{tutar} TL, kartın son 4 hanesi {son4}, {taksit} taksit (aylık {tutar / taksit} TL)"
+        }
+        Havale(iban, banka) { return "{tutar} TL havale: {banka} / {iban}" }
+    }
+}
+
+var odemeler = [
+    Odeme.Nakit,
+    Odeme.Kart(no: "4543123412349876", taksit: 3),
+    Odeme.Havale(iban: "TR12 0006 1234", banka: "Ziraat")
+]
+repeat i from 1 to odemeler.length {
+    print("{i}) {aciklama(odemeler[i], 1200.0)}")
+}
+print(odemeler[2])
+
+# --- 2) İç içe enum: bir hesap ağacı  (2 + 3) * (10 - 4) ---
+# Derleyici de kodu tam olarak böyle bir ağaçta tutar.
+enum Hesap {
+    Sayi(deger: int)
+    Topla(sol: Hesap, sag: Hesap)
+    Cikar(sol: Hesap, sag: Hesap)
+    Carp(sol: Hesap, sag: Hesap)
+}
+
+fn hesapla(h: Hesap) -> int {
+    match h {
+        Sayi(d) { return d }
+        Topla(a, b) { return hesapla(a) + hesapla(b) }
+        Cikar(a, b) { return hesapla(a) - hesapla(b) }
+        Carp(a, b) { return hesapla(a) * hesapla(b) }
+    }
+}
+
+fn yaz(h: Hesap) -> text {
+    match h {
+        Sayi(d) { return text(d) }
+        Topla(a, b) { return "({yaz(a)} + {yaz(b)})" }
+        Cikar(a, b) { return "({yaz(a)} - {yaz(b)})" }
+        Carp(a, b) { return "{yaz(a)} * {yaz(b)}" }
+    }
+}
+
+var agac = Hesap.Carp(
+    sol: Hesap.Topla(sol: Hesap.Sayi(deger: 2), sag: Hesap.Sayi(deger: 3)),
+    sag: Hesap.Cikar(sol: Hesap.Sayi(deger: 10), sag: Hesap.Sayi(deger: 4))
+)
+print("{yaz(agac)} = {hesapla(agac)}")
+
+# --- 3) else: geri kalan çeşitler ---
+match odemeler[3] {
+    Nakit { print("nakit") }
+    else { print("nakit değil") }
+}

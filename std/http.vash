@@ -1,0 +1,268 @@
+# http: web'den veri çekmek (istemci) ve HTTP sunucusu
+#
+#   İstemci:   var c = http.get("https://ornek.com/veri.json")        → http.Response?  (olmazsa none; nedeni: http.error())
+#              http.post(url, govde, "application/json")   http.request("PUT", url, govde, basliklar)
+#   Sunucu:    var sunucu = http.listen(8080) else: ...               → http.Server?
+#              repeat while true {
+#                  var istek = sunucu.next()                           # sıradaki istek (bağlantılar arka planda kabul edilir)
+#                  istek.reply(200, "merhaba")                         # cevap ver (her isteğe bir kez)
+#              }
+#   Hepsi 'use net' ister. İstekler sırayla işlenir: ana programın değişkenleri güvenle kullanılır.
+
+extern "c" needs net {
+    fn _vash_http_istek(yontem: text, url: text, govde: text, basliklar: text) -> int
+    fn _vash_http_durum(no: int) -> int
+    fn _vash_http_govde(no: int) -> text
+    fn _vash_http_basliklar(no: int) -> text
+    fn _vash_http_birak(no: int)
+    fn _vash_http_hata() -> text
+    fn _vash_sunucu_ac(port: int) -> int
+    fn _vash_yerel_sunucu_ac(port: int) -> int
+    fn _vash_guvenli_sunucu_ac(port: int, sertifika: text, parola: text) -> int
+    fn _vash_sunucu_bekle(sunucu: int, ms: int) -> int
+    fn _vash_sunucu_kapat(sunucu: int)
+    fn _vash_istek_yontem(no: int) -> text
+    fn _vash_istek_yol(no: int) -> text
+    fn _vash_istek_sorgu(no: int) -> text
+    fn _vash_istek_basliklar(no: int) -> text
+    fn _vash_istek_govde(no: int) -> text
+    fn _vash_istek_cevapla(no: int, durum: int, govde: text, basliklar: text) -> i32
+}
+
+# Gelen cevap (istemci)
+type Response {
+    status: int                    # 200, 404 ...
+    body: text
+    headers: {text: text}          # adlar küçük harfle: headers["content-type"]
+}
+
+# Gelen istek (sunucu)
+type Request {
+    method: text                   # "GET", "POST" ...
+    path: text                     # "/urunler/5"  (soru işaretinden öncesi)
+    query: text                    # "ara=elma&sayfa=2"
+    body: text
+    headers: {text: text}          # adlar küçük harfle
+    id: int = 0
+
+    # ?ara=elma → param("ara") is "elma"; yoksa ""
+    fn param(name: text) -> text {
+        var parcalar = query.split("&")
+        repeat i from 1 to parcalar.length {
+            var p = parcalar[i]
+            var esit = p.split("=")
+            if _url_coz(esit[1]) is name {
+                if esit.length < 2 {
+                    return ""
+                }
+                return _url_coz(p[esit[1].length + 2 to p.length])
+            }
+        }
+        return ""
+    }
+
+    # path'i '/' ile böler: "/urunler/5" → ["urunler", "5"]
+    fn parts() -> [text] {
+        var sonuc: [text] = []
+        var p = path.split("/")
+        repeat i from 1 to p.length {
+            if p[i].length > 0 {
+                sonuc.add(_url_coz(p[i]))
+            }
+        }
+        return sonuc
+    }
+
+    # Cevap ver. Gövde { ya da [ ile başlıyorsa JSON, değilse düz yazı olarak gönderilir.
+    fn reply(status: int, content: text) -> bool {
+        use net
+        var bos: {text: text} = {}
+        return _cevapla(id, status, content, bos)
+    }
+
+    # Başlıklarla cevap ver: istek.reply_with(201, govde, {"Location": "/urunler/7"})
+    fn reply_with(status: int, content: text, extra: {text: text}) -> bool {
+        use net
+        return _cevapla(id, status, content, extra)
+    }
+}
+
+type Server {
+    id: int
+    port: int
+
+    # Sıradaki isteği bekle (gelene kadar bekler)
+    fn next() -> Request {
+        use net
+        var no = 0
+        repeat while no is 0 {
+            no = _vash_sunucu_bekle(id, -1)
+        }
+        return _istek(no)
+    }
+
+    # En fazla 'ms' milisaniye bekle; istek gelmezse none
+    fn next_within(ms: int) -> Request? {
+        use net
+        var no = _vash_sunucu_bekle(id, ms)
+        if no is 0 {
+            return none
+        }
+        return _istek(no)
+    }
+
+    fn close() {
+        use net
+        _vash_sunucu_kapat(id)
+    }
+}
+
+# ---------- İstemci ----------
+fn get(url: text) -> Response? {
+    use net
+    var bos: {text: text} = {}
+    return request("GET", url, "", bos)
+}
+
+fn post(url: text, body: text, content_type: text) -> Response? {
+    use net
+    return request("POST", url, body, {"Content-Type": content_type})
+}
+
+fn request(method: text, url: text, body: text, headers: {text: text}) -> Response? {
+    use net
+    var no = _vash_http_istek(method, url, body, _baslik_metni(headers))
+    if no is 0 {
+        return none
+    }
+    var c = Response(status: _vash_http_durum(no), body: _vash_http_govde(no), headers: _basliklari_coz(_vash_http_basliklar(no)))
+    _vash_http_birak(no)
+    return c
+}
+
+# Son başarısız get/post/listen neden olmadı?
+fn error() -> text {
+    use net
+    return _vash_http_hata()
+}
+
+# ---------- Sunucu ----------
+fn listen(port: int) -> Server? {
+    use net
+    var no = _vash_sunucu_ac(port)
+    if no is 0 {
+        return none
+    }
+    return Server(id: no, port: port)
+}
+
+# Sadece bu bilgisayardan bağlanılabilen sunucu (127.0.0.1): ağdaki başka cihazlar ulaşamaz
+fn listen_local(port: int) -> Server? {
+    use net
+    var no = _vash_yerel_sunucu_ac(port)
+    if no is 0 {
+        return none
+    }
+    return Server(id: no, port: port)
+}
+
+# HTTPS sunucusu: sertifika bir .pfx dosyası (Let's Encrypt ya da satın alınan).
+# Deneme için sertifika "" verilirse localhost adına kendi kendine imzalı bir sertifika üretilir
+# (tarayıcılar "güvenilmez" der; program bitince anahtarı silinir).
+fn listen_secure(port: int, certificate: text, password: text) -> Server? {
+    use net
+    var no = _vash_guvenli_sunucu_ac(port, certificate, password)
+    if no is 0 {
+        return none
+    }
+    return Server(id: no, port: port)
+}
+
+# ---------- İç işler ----------
+fn _istek(no: int) -> Request {
+    use net
+    return Request(method: _vash_istek_yontem(no), path: _vash_istek_yol(no), query: _vash_istek_sorgu(no), body: _vash_istek_govde(no), headers: _basliklari_coz(_vash_istek_basliklar(no)), id: no)
+}
+
+fn _cevapla(no: int, status: int, body: text, headers: {text: text}) -> bool {
+    use net
+    var h = headers
+    var tip_var = false
+    var adlar = h.keys()
+    repeat i from 1 to adlar.length {
+        if adlar[i].lower() is "content-type" {
+            tip_var = true
+        }
+    }
+    if not tip_var {
+        var b = body.trim()
+        if b.starts_with("\{") or b.starts_with("[") {
+            h["Content-Type"] = "application/json; charset=utf-8"
+        } else {
+            h["Content-Type"] = "text/plain; charset=utf-8"
+        }
+    }
+    return _vash_istek_cevapla(no, status, body, _baslik_metni(h)) is not 0
+}
+
+fn _baslik_metni(headers: {text: text}) -> text {
+    var satirlar: [text] = []
+    var adlar = headers.keys()
+    repeat i from 1 to adlar.length {
+        satirlar.add("{adlar[i]}: {headers[adlar[i]]}{char(13)}\n")
+    }
+    return satirlar.join("")
+}
+
+fn _basliklari_coz(ham: text) -> {text: text} {
+    var sonuc: {text: text} = {}
+    var satirlar = ham.split("\n")
+    repeat i from 1 to satirlar.length {
+        var s = satirlar[i].replace(char(13), "")
+        var parcalar = s.split(":")
+        if parcalar.length >= 2 and parcalar[1].length > 0 and not parcalar[1].contains(" ") {
+            sonuc[parcalar[1].lower()] = s[parcalar[1].length + 2 to s.length].trim()
+        }
+    }
+    return sonuc
+}
+
+fn _onaltilik(h: text) -> int {
+    var d = code(h.upper())
+    if d >= 48 and d <= 57 {
+        return d - 48
+    }
+    if d >= 65 and d <= 70 {
+        return d - 55
+    }
+    return -1
+}
+
+# "elma%20armut+kiraz" → "elma armut kiraz"  (Türkçe harfler dahil)
+fn _url_coz(t: text) -> text {
+    if not t.contains("%") and not t.contains("+") {
+        return t
+    }
+    var b = bytes(0)
+    var kaynak = t.to_bytes()
+    var i = 1
+    repeat while i <= kaynak.length {
+        var c = kaynak[i]
+        if c is 43 {
+            b.add(32)
+        } else if c is 37 and i + 2 <= kaynak.length {
+            var u = _onaltilik(char(kaynak[i + 1]))
+            var a = _onaltilik(char(kaynak[i + 2]))
+            if u >= 0 and a >= 0 {
+                b.add(u * 16 + a)
+                i = i + 2
+            } else {
+                b.add(c)
+            }
+        } else {
+            b.add(c)
+        }
+        i = i + 1
+    }
+    return b.to_text()
+}

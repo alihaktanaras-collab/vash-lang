@@ -1,0 +1,66 @@
+# Yok olabilen değerler: T?  ve  none
+# Kontrol etmeden kullanmak derlerken hata verir; "null hatası" çalışırken hiç olmaz.
+
+type Ogrenci {
+    ad: text
+    not_ort: float
+    danisman: Ogrenci? = none           # olabilir de olmayabilir de
+}
+
+var ogrenciler = [
+    Ogrenci(ad: "Ali", not_ort: 78.5),
+    Ogrenci(ad: "Ayşe", not_ort: 91.0),
+    Ogrenci(ad: "Can", not_ort: 64.0)
+]
+
+# Bulamazsa none döner
+fn bul(liste: [Ogrenci], ad: text) -> Ogrenci? {
+    repeat i from 1 to liste.length {
+        if liste[i].ad is ad {
+            return liste[i]
+        }
+    }
+    return none
+}
+
+# 1) if ... is not none { } : bloğun içinde değer kesin var
+var o = bul(ogrenciler, "Ayşe")
+if o is not none {
+    print("{o.ad} bulundu, ortalaması {o.not_ort}")
+}
+
+# 2) Erken çıkış: none ise dön, sonrasında kesin var
+fn karne(liste: [Ogrenci], ad: text) -> text {
+    var ogr = bul(liste, ad)
+    if ogr is none {
+        return "{ad}: böyle bir öğrenci yok"
+    }
+    if ogr.not_ort >= 85 {                  # buradan sonra ogr kesin var
+        return "{ogr.ad}: takdir"
+    }
+    return "{ogr.ad}: {ogr.not_ort}"
+}
+print(karne(ogrenciler, "Ali"))
+print(karne(ogrenciler, "Ayşe"))
+print(karne(ogrenciler, "Deniz"))
+
+# 3) Yedekle okuma: x else: yedek
+var bilinmeyen = Ogrenci(ad: "(kayıt yok)", not_ort: 0.0)
+print("Bulunan:", (bul(ogrenciler, "Zeynep") else: bilinmeyen).ad)
+
+# 4) Kendine bağlı yapı: danışman zinciri
+var hoca = Ogrenci(ad: "Prof. Demir", not_ort: 100.0)
+var asistan = Ogrenci(ad: "Dr. Kaya", not_ort: 95.0, danisman: hoca)
+var ogrenci = Ogrenci(ad: "Zeynep", not_ort: 88.0, danisman: asistan)
+
+fn zincir(o: Ogrenci) -> text {
+    var yazi = o.ad
+    var simdiki: Ogrenci? = o.danisman
+    repeat while simdiki is not none {
+        yazi = "{yazi} → {simdiki.ad}"
+        simdiki = simdiki.danisman
+    }
+    return yazi
+}
+print(zincir(ogrenci))
+print(o, bul(ogrenciler, "Yok"))

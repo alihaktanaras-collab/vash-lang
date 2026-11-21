@@ -1,0 +1,10 @@
+type Nokta {
+    x: int
+}
+fn yanlis(a: int) -> bool {
+    return a > 0
+}
+var l = [Nokta(x: 1)]
+l.sort()
+var s = [3, 1]
+s.sort(by: yanlis)

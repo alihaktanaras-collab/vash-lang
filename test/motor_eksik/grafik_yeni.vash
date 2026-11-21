@@ -1,0 +1,121 @@
+# Yeni grafik özellikleri: resim, Türkçe yazı tipi, ses, kamera, şekiller
+import graphics
+import math
+
+# 32x32 renkli bir BMP resmi üret
+fn bmp_yap() -> bytes {
+    var b = bytes(0)
+    var satir = 32 * 3
+    var boyut = 54 + satir * 32
+    b.add(66)
+    b.add(77)
+    b.add_int(boyut, 4)
+    b.add_int(0, 4)
+    b.add_int(54, 4)
+    b.add_int(40, 4)
+    b.add_int(32, 4)
+    b.add_int(32, 4)
+    b.add_int(1, 2)
+    b.add_int(24, 2)
+    b.add_int(0, 4)
+    b.add_int(satir * 32, 4)
+    b.add_int(2835, 4)
+    b.add_int(2835, 4)
+    b.add_int(0, 4)
+    b.add_int(0, 4)
+    repeat y from 0 to 31 {
+        repeat x from 0 to 31 {
+            b.add(x * 8)                       # mavi
+            b.add(y * 8)                       # yeşil
+            if (x // 8 + y // 8) % 2 is 0 {      # kırmızı: dama
+                b.add(255)
+            } else {
+                b.add(40)
+            }
+        }
+    }
+    return b
+}
+
+# 0.3 saniyelik 440 Hz bip sesi (WAV)
+fn wav_yap() -> bytes {
+    var hz = 22050
+    var n = hz * 3 // 10
+    var b = "RIFF".to_bytes()
+    b.add_int(36 + n * 2, 4)
+    var w = "WAVEfmt ".to_bytes()
+    repeat i from 1 to w.length {
+        b.add(w[i])
+    }
+    b.add_int(16, 4)
+    b.add_int(1, 2)
+    b.add_int(1, 2)
+    b.add_int(hz, 4)
+    b.add_int(hz * 2, 4)
+    b.add_int(2, 2)
+    b.add_int(16, 2)
+    var d = "data".to_bytes()
+    repeat i from 1 to d.length {
+        b.add(d[i])
+    }
+    b.add_int(n * 2, 4)
+    repeat i from 0 to n - 1 {
+        var deger = math.sin(2.0 * math.PI * 440.0 * float(i) / float(hz)) * 8000.0
+        b.add_int(int(deger), 2)
+    }
+    return b
+}
+
+print(write_bytes("deneme_resim.bmp", bmp_yap()))
+print(write_bytes("deneme_ses.wav", wav_yap()))
+
+graphics.open_resizable_window(640, 360, "Vash grafik denemesi")
+var resim = graphics.load_texture("deneme_resim.bmp")
+print("resim:", graphics.texture_ok(resim), resim.width, resim.height)
+graphics.set_smooth(resim, false)
+
+var yazi = graphics.load_font("C:/Windows/Fonts/segoeui.ttf", 32)
+print("yazı tipi:", graphics.font_ok(yazi), yazi.base_size, yazi.glyph_count)
+
+graphics.open_audio()
+print("ses aygıtı:", graphics.audio_ok())
+var bip = graphics.load_sound("deneme_ses.wav")
+print("ses:", graphics.sound_ok(bip), bip.sample_rate, bip.channels, bip.frame_count)
+graphics.play_sound(bip)
+print("çalıyor:", graphics.sound_playing(bip))
+
+var kamera = graphics.camera(320.0, 180.0, 0.0, 0.0, 2.0)
+var dunya = graphics.screen_to_world(320.0, 180.0, kamera)
+print("dünya:", dunya.x, dunya.y)
+print("ekran:", graphics.screen_width(), graphics.screen_height())
+print("genişlik:", graphics.text_width_font(yazi, "Şğüİı", 32.0) > 0.0)
+
+repeat kare from 1 to 20 {
+    graphics.begin_drawing(graphics.rgb(24, 26, 32))
+    graphics.draw_gradient(0.0, 0.0, 640.0, 120.0, graphics.rgb(60, 80, 160), graphics.rgb(24, 26, 32))
+    graphics.draw_rounded(20.0, 140.0, 200.0, 120.0, 12.0, graphics.rgb(46, 50, 62))
+    graphics.draw_rounded_outline(20.0, 140.0, 200.0, 120.0, 12.0, 2.0, graphics.rgb(90, 140, 255))
+    graphics.draw_texture(resim, 40.0, 160.0)
+    graphics.draw_sprite(resim, 0.0, 0.0, 32.0, 32.0, 100.0, 160.0, 64.0, 64.0, 30.0, true, graphics.WHITE)
+    graphics.draw_triangle(300.0, 300.0, 260.0, 220.0, 340.0, 220.0, graphics.ORANGE)
+    graphics.draw_line(380.0, 200.0, 600.0, 320.0, 4.0, graphics.GREEN)
+    graphics.draw_circle_outline(500.0, 250.0, 40.0, graphics.YELLOW)
+    graphics.draw_rectangle_outline(560.0, 140.0, 60.0, 40.0, 3.0, graphics.fade(graphics.RED, 0.5))
+    graphics.draw_text_font(yazi, "Merhaba Dünya! Çığ, şöyle, İğne, ü ö ş ç ğ ı ₺", 20.0, 20.0, 32.0, graphics.WHITE)
+    graphics.clip_begin(240.0, 140.0, 60.0, 30.0)
+    graphics.draw_rectangle(200.0, 100.0, 200.0, 200.0, graphics.PURPLE)
+    graphics.clip_end()
+    graphics.camera_begin(kamera)
+    graphics.draw_circle(0.0, 0.0, 6.0, graphics.BLUE)
+    graphics.camera_end()
+    graphics.end_drawing()
+    if kare is 15 {
+        graphics.screenshot("grafik_yeni.png")
+    }
+}
+graphics.unload_sound(bip)
+graphics.close_audio()
+graphics.unload_font(yazi)
+graphics.unload_texture(resim)
+graphics.close_window()
+print("bitti")

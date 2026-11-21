@@ -1,0 +1,58 @@
+# Küçük bir ürün sunucusu (REST, JSON)
+import http
+import json
+
+type Urun {
+    ad: text
+    fiyat: float
+}
+
+var urunler: [Urun] = [Urun(ad: "elma", fiyat: 12.5)]
+var sunucu = http.listen(8091) else: http.Server(id: 0, port: 0)
+if sunucu.id is 0 {
+    print("Sunucu açılamadı: {http.error()}")
+}
+print("dinleniyor: {sunucu.port}")
+
+fn urun_json(u: Urun) -> json.Json {
+    return json.object({"ad": json.string(u.ad), "fiyat": json.number(u.fiyat)})
+}
+
+var calisiyor = true
+repeat while calisiyor {
+    var istek = sunucu.next()
+    var p = istek.parts()
+    if istek.method is "GET" and istek.path is "/urunler" {
+        var dizi: [json.Json] = []
+        var ara = istek.param("ara")
+        repeat i from 1 to urunler.length {
+            if ara.length is 0 or urunler[i].ad.contains(ara) {
+                dizi.add(urun_json(urunler[i]))
+            }
+        }
+        istek.reply(200, json.stringify(json.array(dizi)))
+    } else if istek.method is "POST" and istek.path is "/urunler" {
+        var veri = json.parse(istek.body)
+        if veri is none {
+            istek.reply(400, "\{\"hata\": \"geçersiz JSON\"\}")
+        } else {
+            urunler.add(Urun(ad: json.as_text(json.get(veri, "ad"), "?"), fiyat: json.as_number(json.get(veri, "fiyat"), 0.0)))
+            istek.reply_with(201, json.stringify(urun_json(urunler[urunler.length])), {"Location": "/urunler/{urunler.length}"})
+        }
+    } else if istek.method is "PUT" and p.length is 2 and p[1] is "urunler" {
+        var no = int(p[2], else: 0)
+        if no < 1 or no > urunler.length {
+            istek.reply(404, "\{\"hata\": \"ürün yok\"\}")
+        } else {
+            urunler[no].fiyat = json.as_number(json.get(json.parse(istek.body) else: json.null(), "fiyat"), urunler[no].fiyat)
+            istek.reply(200, json.stringify(urun_json(urunler[no])))
+        }
+    } else if istek.path is "/kapat" {
+        istek.reply(200, "hoşça kal")
+        calisiyor = false
+    } else {
+        istek.reply(404, "\{\"hata\": \"böyle bir yol yok: {istek.path}\"\}")
+    }
+}
+sunucu.close()
+print("kapandı, ürün sayısı: {urunler.length}")

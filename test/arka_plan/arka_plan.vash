@@ -1,0 +1,59 @@
+# start / wait: arka planda iş
+fn yavas_toplam(n: int) -> int {
+    var t = 0
+    repeat i from 1 to n {
+        t = t + i % 7
+    }
+    return t
+}
+
+fn selamla(ad: text, kac: int) -> text {
+    var parcalar: [text] = []
+    repeat kac {
+        parcalar.add("merhaba {ad}")
+    }
+    return parcalar.join(", ")
+}
+
+fn kaydet(ad: text, icerik: text) -> bool {
+    use files
+    return write_file(ad, icerik)
+}
+
+fn liste_yap(n: int) -> [int] {
+    var l: [int] = []
+    repeat i from 1 to n {
+        l.add(i * i)
+    }
+    return l
+}
+
+var sure = measure {
+    var isler: [task[int]] = []
+    repeat i from 1 to 8 {
+        isler.add(start yavas_toplam(50000000))
+    }
+    var toplam = 0
+    repeat i from 1 to isler.length {
+        toplam = toplam + isler[i].wait()
+    }
+    print("8 iş toplamı:", toplam)
+}
+var tek = measure {
+    print("tek iş:", yavas_toplam(50000000))
+}
+print("8 iş aynı anda tek işten en fazla 3 kat uzun mu:", sure < tek * 3.0)
+
+var ad = "Ali"
+var s = start selamla(ad, 3)
+ad = "Veli"                                    # iş kendi kopyasıyla çalışır
+print(s.wait())
+
+var k = start kaydet("arka_plan_deneme.txt", "yazıldı")
+var l = start liste_yap(5)
+print(k.wait(), l.wait())
+
+var bitti = start yavas_toplam(10)
+repeat while not bitti.done() {
+}
+print("bitti:", bitti.wait())

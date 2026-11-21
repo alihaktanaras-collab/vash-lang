@@ -1,0 +1,5 @@
+# Altın Avcısı: düzenleyicide yapılan sahneyi oynatır.
+# Çalıştır:  vash run oyna.vash   ya da   vash build oyna.vash  (oyna.exe)
+import engine
+
+engine.run("oyun.json")

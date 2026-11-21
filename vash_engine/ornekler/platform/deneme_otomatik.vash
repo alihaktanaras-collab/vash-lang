@@ -1,0 +1,31 @@
+# Otomatik deneme: oyunu açar, birkaç saniye oyuncuyu sağa yürütüp zıplatır gibi günceller, ekran görüntüsü alır.
+import engine
+import graphics
+
+var bulunan = engine.load("oyun.json")
+if bulunan is none {
+    print("oyun.json okunamadı")
+} else {
+    var g = bulunan
+    engine.open(g, g.title)
+    g.prepare(g.folder)
+    print("nesne:", g.things.length, "resim:", g.textures.length, "ses:", g.sounds.length, "oyuncu:", g.player())
+    repeat kare from 1 to 150 {
+        g.update(1.0 / 60.0)
+        if kare is 60 {
+            var p = g.player()
+            g.things[p].x = 600.0
+            g.things[p].y = 200.0
+        }
+        g.show()
+        if kare is 140 {
+            graphics.screenshot("ekran_oyun.png")
+        }
+    }
+    var p = g.player()
+    print("oyuncu yerde mi:", g.things[p].on_ground, "y:", g.things[p].y)
+    print("kaydet:", engine.save(g, "deneme_kayit.json"))
+    var geri = engine.load("deneme_kayit.json") else: engine.Game()
+    print("geri yüklenen nesne:", geri.things.length, geri.things[p].name, geri.layers.length)
+    graphics.close_window()
+}

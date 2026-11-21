@@ -50,15 +50,15 @@ print("total:", total, "saved:", save("ok\n"))
 
 - **Readable.** Python-like syntax with braces, `is` instead of `==`, keyword arguments for every constructor, no `null` surprises (`T?` + `else:`).
 - **Fast.** Compiled to native code through LLVM. `parallel repeat` uses every core with one keyword. Measured together with C and C++
-  (clang 23, `-O2`, best of 5, same machine and moment; [details](olcum/c_karsilastirma/SONUC.md)):
+  (clang 23, `-O2`, best of 5, median of 3 runs, same machine and moment; [details](olcum/c_karsilastirma/SONUC.md)):
 
   | Program | Vash | C | C++ |
   |---|---|---|---|
-  | Mandelbrot 2000×2000 (floating point) | **0.35 s** | 0.59 s | 0.59 s |
-  | Sort 5 million integers | **0.17 s** | 0.98 s (`qsort`) | 0.26 s (`std::sort`) |
-  | 2 billion iteration integer loop | 2.84 s | 2.49 s | **2.47 s** |
-  | Prime sieve up to 50 million | 0.47 s | 0.44 s | **0.27 s** (bit-packed `vector<bool>`) |
-  | Same loop on all 16 cores | **0.27 s** (`parallel repeat`) | — | 0.32 s (`std::thread`) |
+  | Mandelbrot 2000×2000 (floating point) | **0.33 s** | 0.55 s | 0.55 s |
+  | Sort 5 million integers | **0.15 s** | 0.92 s (`qsort`) | 0.23 s (`std::sort`) |
+  | 2 billion iteration integer loop | 2.85 s | 2.48 s | **2.46 s** |
+  | Prime sieve up to 50 million | 0.46 s | 0.44 s | **0.26 s** (bit-packed `vector<bool>`) |
+  | Same loop on all 16 cores | **0.28 s** (`parallel repeat`) | — | 0.32 s (`std::thread`) |
 
   Where C++ wins, Vash is paying for safety: it checks every integer addition for overflow, and keeps one byte per `bool`
   so that parallel writes can never race.

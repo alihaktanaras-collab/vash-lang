@@ -17,15 +17,15 @@ ve onunla yazılmış gerçek uygulamalar.</p>
 
 - **Okunaklı.** Python'a benzer, süslü parantezli yazım; `==` yerine `is`; her nesne alan adlarıyla kurulur; `null` sürprizi yok (`T?` ve `else:`).
 - **Hızlı.** LLVM ile makine koduna derlenir. `parallel repeat` tek kelimeyle bütün çekirdekleri kullanır. C ve C++ ile aynı anda ölçüldü
-  (clang 23, `-O2`, 5 denemenin en iyisi; [ayrıntı](olcum/c_karsilastirma/SONUC.md)):
+  (clang 23, `-O2`, 5 denemenin en iyisi, 3 ölçümün ortancası; [ayrıntı](olcum/c_karsilastirma/SONUC.md)):
 
   | Program | Vash | C | C++ |
   |---|---|---|---|
-  | Mandelbrot 2000×2000 (ondalıklı hesap) | **0,35 sn** | 0,59 sn | 0,59 sn |
-  | 5 milyon sayıyı sıralama | **0,17 sn** | 0,98 sn (`qsort`) | 0,26 sn (`std::sort`) |
-  | 2 milyar turluk tam sayı döngüsü | 2,84 sn | 2,49 sn | **2,47 sn** |
-  | 50 milyona kadar asal eleği | 0,47 sn | 0,44 sn | **0,27 sn** (bit bit `vector<bool>`) |
-  | Aynı döngü 16 çekirdekte | **0,27 sn** (`parallel repeat`) | — | 0,32 sn (`std::thread`) |
+  | Mandelbrot 2000×2000 (ondalıklı hesap) | **0,33 sn** | 0,55 sn | 0,55 sn |
+  | 5 milyon sayıyı sıralama | **0,15 sn** | 0,92 sn (`qsort`) | 0,23 sn (`std::sort`) |
+  | 2 milyar turluk tam sayı döngüsü | 2,85 sn | 2,48 sn | **2,46 sn** |
+  | 50 milyona kadar asal eleği | 0,46 sn | 0,44 sn | **0,26 sn** (bit bit `vector<bool>`) |
+  | Aynı döngü 16 çekirdekte | **0,28 sn** (`parallel repeat`) | — | 0,32 sn (`std::thread`) |
 
   C++'ın önde olduğu yerlerde Vash güvenlik bedeli ödüyor: her tam sayı toplamasında taşmayı kontrol ediyor ve paralel
   yazmalar asla çakışmasın diye her `bool`'u bir bayt tutuyor.

@@ -1,0 +1,94 @@
+# Hızlandırmalar davranışı değiştirmemeli:
+# döngü öncesi paylaşım kontrolü, repeat N { l.add(sabit) } kalıbı, taban sıralaması, paralel sınır bilgisi
+
+# 1) Döngüden önce paylaşılan liste: kopya etkilenmemeli
+var a = [1, 2, 3, 4, 5]
+var b = a
+repeat i from 1 to a.length {
+    a[i] = a[i] * 10
+}
+print(a, b)
+
+# 2) Döngüde başka bir yere verilen liste: güvenli yol (her yazmada kontrol)
+var kopyalar: [[int]] = []
+var c = [0, 0, 0]
+repeat i from 1 to 3 {
+    c[i] = i
+    kopyalar.add(c)
+}
+print(c, kopyalar)
+
+# 3) İç içe döngü, bool liste, while şartında length
+var isaret: [bool] = []
+repeat 10 {
+    isaret.add(false)
+}
+var j = 2
+repeat while j <= isaret.length {
+    var k = j * j
+    repeat while k <= isaret.length {
+        isaret[k] = true
+        k = k + j
+    }
+    j = j + 1
+}
+print(isaret)
+
+# 4) Doldurma kalıbı: 0 ve eksi sayıda hiç eklemez, paylaşılan liste kopyalanır
+var d: [int] = [9]
+var e = d
+repeat 3 {
+    d.add(7)
+}
+repeat 0 {
+    d.add(1)
+}
+repeat -2 {
+    d.add(1)
+}
+print(d, e, d.length)
+
+# 5) Taban sıralaması (4096'dan büyük) ve küçük liste
+var s: [int] = []
+var x = 7
+repeat 5000 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    s.add(x % 1000 - 500)
+}
+s.sort()
+var sirali = true
+repeat i from 2 to s.length {
+    if s[i - 1] > s[i] {
+        sirali = false
+    }
+}
+print("sıralı:", sirali, s[1], s[s.length])
+var f: [float] = []
+repeat i from 1 to 5000 {
+    f.add(float(5000 - i) / 3.0 - 700.0)
+}
+f.sort()
+print(f[1], f[f.length])
+
+# 6) Paralel döngü, sabit sınırlar
+var t = 0
+parallel repeat i from 1 to 1000000 {
+    t = t + i % 7
+}
+print(t)
+
+# 7) Döngüde sınır dışı yazma yine yakalanmalı
+fn tasan() fails {
+    var l = [1, 2, 3]
+    repeat i from 1 to 4 {
+        if i is 4 {
+            fail "sınıra geldi"
+        }
+        l[i] = 0
+    }
+}
+do {
+    try tasan()
+} catch h {
+    print("yakalandı:", h)
+}

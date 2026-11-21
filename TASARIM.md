@@ -1009,6 +1009,19 @@ var kirmizi = Renk(r: 230, g: 41, b: 55)     # Vash'ta normal bir tip gibi
   `vash_disk_bilgi`, `vash_suruculer`, `vash_gezginde_ac` (sadece var olan yollar, explorer üzerinden; komut çalıştırmaz), `vash_dosya_basi`.
   Hepsi kum havuzu klasör sınırına uyar. Dönen yazılar iş parçacığına özel tamponda.
 - Ölçüm: 854 bin dosya 20,9 sn (Python os.walk+stat 163,7 sn). Kopya arama 96,6 sn → 0,6 sn (iki adım + çok çekirdek + 8 baytlık iz).
+
+### 71. Hızlandırmalar (C++ ile yarış)
+- **Taban sıralaması:** `[int]`/`[float]` listelerinin `sort()`'u 4096 elemandan büyükse radix sort (16 bitlik 4 basamak, kararlı;
+  boş basamak turları atlanır; -0.0 = +0.0). 5 milyon sayı: 0,50 → 0,17 sn (`std::sort` 0,26).
+- **Paralel sınır bilgisi:** sınırları sabit `parallel repeat`'te iş fonksiyonuna `llvm.assume(bas >= A)`, `llvm.assume(son <= B)`.
+  Sayaçla yapılan hesaplardaki taşma kontrolleri silinir: 0,52 → 0,27 sn (`std::thread` 0,32).
+- **Döngü öncesi paylaşım kontrolü:** döngüde bir yerel sayı/bool listesine sadece `l[i] = x`, `l[i]`, `l.length` ile dokunuluyorsa
+  (başka yere verilmiyor, `add` yok, lambda yok, `when` izlemiyor, paralel paylaşılan değil) `liste_yazilabilir` döngüden önce bir kez
+  çağrılır, içeride kontrol yoktur. İki derleyicide aynı (karşılaştırma testleri için; adlar kod sırasına göre sıralanır).
+- **Doldurma kalıbı:** `repeat N { l.add(sabit) }` (l yerel `[bool]`/`[int]`, sabit true/false/sayı) → `liste_doldur` (memset).
+- **TBAA:** `[bool]` ve `bytes` elemanlarına ayrı etiket (`liste.bayt`): 1 baytlık yazmalar liste başlığını değiştirmiş sayılmaz.
+- Bilerek yapılmayanlar: bit bit `[bool]` (paralel yazmalarda veri yarışı olurdu), tam sayı taşma kontrolünü kaldırmak (güvence).
+- Test: `test/hizlandirma/hizlandirma.vash`.
 ## 🛠️ Vash'ı Vash'la yazmak (self-hosting) — ilerleme
 Derleyicinin Vash'la yazılmış hâli `vashc/` klasöründe. Her parça, Python'daki karşılığıyla
 **birebir aynı sonucu** verdiği kontrol edilerek eklendi (`python vashc/karsilastir_*.py`).

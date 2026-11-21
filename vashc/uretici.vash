@@ -113,6 +113,7 @@ global var CALISMA_ZAMANI: [text] = [
     "declare i64 @liste_al(ptr, i64, i64)",
     "declare void @liste_koy(ptr, i64, i64, i64)",
     "declare void @liste_ekle(ptr, i64)",
+    "declare void @liste_doldur(ptr, i64, i64)",
     "declare void @liste_sil(ptr, i64, i64)",
     "declare i64 @liste_uzunluk(ptr)",
     "declare ptr @liste_yazilabilir(ptr)",
@@ -186,10 +187,13 @@ global var TBAA_TANIMLARI = [
     "!9002 = !\{!9001, !9001, i64 0\}",
     "!9003 = !\{!\"liste.eleman\", !9000, i64 0\}",
     "!9004 = !\{!9003, !9003, i64 0\}",
-    "!9005 = !\{i64 0, i64 1152921504606846976\}"
+    "!9005 = !\{i64 0, i64 1152921504606846976\}",
+    "!9006 = !\{!\"liste.bayt\", !9000, i64 0\}",
+    "!9007 = !\{!9006, !9006, i64 0\}"
 ]
 global var TBAA_BASLIK = "!tbaa !9002"
 global var TBAA_ELEMAN = "!tbaa !9004"
+global var TBAA_BAYT = "!tbaa !9007"                # [bool] ve bytes elemanları (1 bayt): başlıkla karışmaz
 
 global var HATA = ""
 global var UST: [text] = []                  # dosyanın en üstüne gidecekler
@@ -221,6 +225,7 @@ global var PROGRAM_PARALEL = false           # programda parallel var mı? (yoks
 global var YAKALAYICILAR: [Yakalayici] = []   # şu an yazılan fonksiyonda açık olan do/catch'ler (içten dışa)
 global var EK_FONKSIYONLAR: [text] = []       # parallel işlerinden üretilen fonksiyonlar
 global var ELEMAN_LISTELERI: [text] = []      # parallel repeat işinde L[i] ile yazılan listeler
+global var TEK_SAHIPLI: [text] = []           # döngü boyunca paylaşılamayacağı kesin listelerin adresleri (paylaşım kontrolü döngüden önce yapıldı)
 global var PROGRAM_ARENA = false             # programda arena { } bloğu var mı? (yoksa üretilen kod hiç değişmez)
 global var ARENA_YERELLERI: [Adres] = []     # arena bloklarının içinde oluşturulan metin/liste değişkenleri
 global var ARENA_BASLANGIC: [int] = []       # her açık arena bloğunun ARENA_YERELLERI'nde başladığı yer                       # pencere.html (pencere varsa okunur)
@@ -1340,6 +1345,16 @@ fn _paralel_tekrar(k: parser.Dugum) {
     _yaz("store i64 %son, ptr {son_yer}")
     var i = _yerel_ayir(k.deger, "int")
     _yaz("store i64 %bas, ptr {i}")
+    # Sınırlar sabitse LLVM'e söyle: bu parça da o aralıkta (sayaçla yapılan hesaplardaki taşma kontrollerini silebilsin)
+    if k.cocuklar[1].tur is "Sayi" and k.cocuklar[2].tur is "Sayi" {
+        _ek_bildir("declare void @llvm.assume(i1)")
+        var c1 = _yeni()
+        var c2 = _yeni()
+        _yaz("{c1} = icmp sge i64 %bas, {k.cocuklar[1].deger}")
+        _yaz("call void @llvm.assume(i1 {c1})")
+        _yaz("{c2} = icmp sle i64 %son, {k.cocuklar[2].deger}")
+        _yaz("call void @llvm.assume(i1 {c2})")
+    }
     _dongu_iskeleti(DonguBilgisi(tur: "sayac", kosul: k, i: i, son: son_yer, adim: "1", yon: "ileri", buyukluk: 1, satir: k.satir), govde)
     repeat j from 1 to t_adlari.length {
         _toplama_bitir(t_adlari[j], t_turleri[j], t_dis[j], k.satir)
@@ -2368,8 +2383,160 @@ fn _eger(k: parser.Dugum) {
 #     govde:     ...komutlar...
 #     ilerle:    (sayacı artır) → kontrol          ← skip buraya atlar
 #     cikis:                                      ← stop buraya atlar
+# ---- Döngüden önce bir kez "kendine ait yap" ----
+# Döngüde bir yerel listeye SADECE l[i] = x, l[i] ve l.length ile dokunuluyorsa liste döngü boyunca
+# başka bir yere geçemez (paylaşılamaz). O zaman paylaşım kontrolü döngüden önce bir kez yapılır,
+# içeride hiç yapılmaz: LLVM listenin uzunluğunu ve veri adresini döngünün dışına taşıyabilir.
+fn _ad_once(a: text, b: text) -> bool {
+    var n = a.length
+    if b.length < n {
+        n = b.length
+    }
+    repeat i from 1 to n {
+        var x = code(a[i])
+        var y = code(b[i])
+        if x is not y {
+            return x < y
+        }
+    }
+    return a.length < b.length
+}
+
+fn _eleman_yazilan_adlar(d: parser.Dugum, adlar: [text]) -> [text] {
+    var s = adlar
+    if d.tur is "ElemanAtama" and d.ek is not "sozluk" {
+        var l = d.cocuklar[1]
+        if l.tur is "Isim" {
+            if l.tip.starts_with("[") {
+                if not _sayacli(_ic(l.tip)) and not _icinde(l.deger, s) {
+                    s.add(l.deger)
+                }
+            }
+        }
+    }
+    repeat i from 1 to d.cocuklar.length {
+        s = _eleman_yazilan_adlar(d.cocuklar[i], s)
+    }
+    return s
+}
+
+# 'ad' bu düğümde sadece ad[i] = x, ad[i] ve ad.length biçiminde mi geçiyor?
+fn _sadece_eleman(d: parser.Dugum, ad: text) -> bool {
+    if d.tur is "Isim" {
+        return d.deger is not ad
+    }
+    if d.tur is "Atama" or d.tur is "DegiskenTanimi" {
+        if d.deger is ad {
+            return false
+        }
+    }
+    if d.tur is "ElemanAtama" {
+        if d.cocuklar[1].tur is "Isim" {
+            if d.cocuklar[1].deger is ad {
+                return _sadece_eleman(d.cocuklar[2], ad) and _sadece_eleman(d.cocuklar[3], ad)
+            }
+        }
+    }
+    if d.tur is "Erisim" {
+        if d.cocuklar[1].tur is "Isim" {
+            if d.cocuklar[1].deger is ad {
+                return _sadece_eleman(d.cocuklar[2], ad)
+            }
+        }
+    }
+    if d.tur is "Ozellik" and d.deger is "length" {
+        if d.cocuklar[1].tur is "Isim" {
+            if d.cocuklar[1].deger is ad {
+                return true
+            }
+        }
+    }
+    repeat i from 1 to d.cocuklar.length {
+        if not _sadece_eleman(d.cocuklar[i], ad) {
+            return false
+        }
+    }
+    return true
+}
+
+fn _izleniyor_mu(adres: text) -> bool {
+    if IZLEYICILER.has(adres) {
+        return true
+    }
+    repeat i from 1 to YEREL_WHENLER.length {
+        if _icinde(adres, YEREL_WHENLER[i].adresler) {
+            return true
+        }
+    }
+    return false
+}
+
+fn _tek_sahip_baslat(dugumler: [parser.Dugum]) -> [text] {
+    use change TEK_SAHIPLI
+    var adlar: [text] = []
+    repeat i from 1 to dugumler.length {
+        adlar = _eleman_yazilan_adlar(dugumler[i], adlar)
+    }
+    # ada göre sırala (iki derleyici aynı sırayla yazsın)
+    repeat i from 2 to adlar.length {
+        var j = i
+        var devam = true
+        repeat while devam {
+            devam = false
+            if j > 1 {
+                if _ad_once(adlar[j], adlar[j - 1]) {
+                    var g = adlar[j]
+                    adlar[j] = adlar[j - 1]
+                    adlar[j - 1] = g
+                    j = j - 1
+                    devam = true
+                }
+            }
+        }
+    }
+    var eklenen: [text] = []
+    repeat i from 1 to adlar.length {
+        var ad = adlar[i]
+        if KAPSAM.has(ad) and not _icinde(ad, ELEMAN_LISTELERI) {
+            var adres = KAPSAM[ad].adres
+            var uygun = adres.starts_with("%") and not _icinde(adres, TEK_SAHIPLI) and not _izleniyor_mu(adres)
+            repeat k from 1 to dugumler.length {
+                if uygun and not _sadece_eleman(dugumler[k], ad) {
+                    uygun = false
+                }
+            }
+            if uygun {
+                var p = _yeni()
+                var p2 = _yeni()
+                _yaz("{p} = load ptr, ptr {adres}")
+                _yaz("{p2} = call ptr @liste_yazilabilir(ptr {p})")
+                _yaz("store ptr {p2}, ptr {adres}")
+                TEK_SAHIPLI.add(adres)
+                eklenen.add(adres)
+            }
+        }
+    }
+    return eklenen
+}
+
+fn _tek_sahip_bitir(eklenen: [text]) {
+    use change TEK_SAHIPLI
+    var kalan: [text] = []
+    repeat i from 1 to TEK_SAHIPLI.length {
+        if not _icinde(TEK_SAHIPLI[i], eklenen) {
+            kalan.add(TEK_SAHIPLI[i])
+        }
+    }
+    TEK_SAHIPLI = kalan
+}
+
 fn _dongu_iskeleti(b: DonguBilgisi, govde: [parser.Dugum]) {
     use change DONGULER
+    var taranan = govde
+    if b.tur is "surece" {
+        taranan.add(b.kosul)
+    }
+    var tek_sahipler = _tek_sahip_baslat(taranan)
     var kontrol = _etiket("kontrol")
     var govde_e = _etiket("govde")
     var ilerle = _etiket("ilerle")
@@ -2387,6 +2554,7 @@ fn _dongu_iskeleti(b: DonguBilgisi, govde: [parser.Dugum]) {
     _dongu_ilerle(b, cikis)
     _yaz("br label %{kontrol}")
     _blok_baslat(cikis)
+    _tek_sahip_bitir(tek_sahipler)
 }
 
 fn _dongu_kontrol(b: DonguBilgisi) -> text {
@@ -2468,8 +2636,53 @@ fn _dongu_ilerle(b: DonguBilgisi, cikis: text) {
 }
 
 # repeat 3 { }: gizli bir sayaç 0'dan başlar, 3 olunca durur
+# repeat N { l.add(sabit) }: l yerel bir [bool] / [int] listesi ve sabit true/false ya da bir sayıysa
+# → listeyi tek seferde doldur (davranış aynı, 50 milyon çağrı yerine bir bellek doldurma)
+fn _doldurma_kalibi(k: parser.Dugum) -> text {
+    var govde = k.cocuklar[2].cocuklar
+    if govde.length is not 1 {
+        return ""
+    }
+    if govde[1].tur is not "IfadeKomutu" {
+        return ""
+    }
+    var e = govde[1].cocuklar[1]
+    if e.tur is not "MetotCagrisi" or e.deger is not "add" {
+        return ""
+    }
+    var nesne = e.cocuklar[1]
+    var arg = e.cocuklar[2].cocuklar
+    if nesne.tur is not "Isim" or arg.length is not 1 {
+        return ""
+    }
+    var a = arg[1]
+    var deger = ""
+    if nesne.tip is "[bool]" and a.tur is "Mantiksal" {
+        deger = "0"
+        if a.deger is "true" {
+            deger = "1"
+        }
+    } else if nesne.tip is "[int]" and a.tur is "Sayi" {
+        deger = a.deger
+    }
+    if deger.length is 0 or not KAPSAM.has(nesne.deger) or _icinde(nesne.deger, ELEMAN_LISTELERI) {
+        return ""
+    }
+    if _izleniyor_mu(KAPSAM[nesne.deger].adres) {
+        return ""
+    }
+    return "{nesne.deger}|{deger}"
+}
+
 fn _tekrar_sayi(k: parser.Dugum) {
     var kac = _ifade(k.cocuklar[1])
+    var kalip = _doldurma_kalibi(k)
+    if kalip.length > 0 {
+        var p = kalip.split("|")
+        var l = _yazilabilir_liste(p[1])
+        _yaz("call void @liste_doldur(ptr {l}, i64 {kac}, i64 {p[2]})")
+        return
+    }
     var sayac = _yerel_ayir("gizli_sayac{SAYAC}", "int")
     _yaz("store i64 0, ptr {sayac}")
     _dongu_iskeleti(DonguBilgisi(tur: "sayi", kosul: k, sayac: sayac, kac: kac), k.cocuklar[2].cocuklar)
@@ -4038,7 +4251,7 @@ fn _bayt_erisim(e: parser.Dugum) -> text {
         var b8 = _yeni()
         t = _yeni()
         _yaz("{yer} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
-        _yaz("{b8} = load i8, ptr {yer}")
+        _yaz("{b8} = load i8, ptr {yer}, {TBAA_BAYT}")
         _yaz("{t} = zext i8 {b8} to i64")
     }
     _gecici_birak(liste_d, l)
@@ -4141,6 +4354,14 @@ fn _eleman_ata(k: parser.Dugum) {
     if _sayacli(eleman_tipi) {
         var liste = _yuvayi_yaz(a.adres, liste_d.tip)
         _yaz("call void @liste_koy(ptr {liste}, i64 {sira}, i64 {kutu}, i64 {k.satir})")
+    } else if liste_d.tur is "Isim" and _icinde(a.adres, TEK_SAHIPLI) {
+        var p = _yeni()                              # döngüden önce kendine ait yapıldı: kontrol yok
+        _yaz("{p} = load ptr, ptr {a.adres}")
+        var n = _liste_uzunlugu(p)
+        var veri = _liste_alani(p, 32, "ptr")
+        var s0 = _sinir_kontrolu(p, sira, n, k.satir)
+        var ey = _yeni()
+        _eleman_sakla(ey, veri, s0, kutu, eleman_tipi)
     } else {
         var p = _yeni()
         _yaz("{p} = load ptr, ptr {a.adres}")
@@ -4176,7 +4397,7 @@ fn _eleman_sakla(ey: text, veri: text, s0: text, kutu: text, eleman_tipi: text) 
         var b8 = _yeni()
         _yaz("{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
         _yaz("{b8} = trunc i64 {kutu} to i8")
-        _yaz("store i8 {b8}, ptr {ey}")
+        _yaz("store i8 {b8}, ptr {ey}, {TBAA_BAYT}")
         return
     }
     _yaz("{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")
@@ -4193,7 +4414,7 @@ fn _liste_eleman_oku(l: text, sira: text, satir: int, tip: text) -> text {
     if tip is "bool" {                               # [bool]: her eleman 1 bayt
         var b8 = _yeni()
         _yaz("{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
-        _yaz("{b8} = load i8, ptr {ey}")
+        _yaz("{b8} = load i8, ptr {ey}, {TBAA_BAYT}")
         _yaz("{kutu} = zext i8 {b8} to i64")
         return kutu
     }

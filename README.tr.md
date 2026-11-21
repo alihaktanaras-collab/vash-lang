@@ -21,13 +21,14 @@ ve onunla yazılmış gerçek uygulamalar.</p>
 
   | Program | Vash | C | C++ |
   |---|---|---|---|
-  | Mandelbrot 2000×2000 (ondalıklı hesap) | **0,32 sn** | 0,55 sn | 0,56 sn |
-  | 5 milyon sayıyı sıralama | 0,50 sn | 0,92 sn (`qsort`) | **0,24 sn** (`std::sort`) |
-  | 2 milyar turluk tam sayı döngüsü | 2,81 sn | **2,47 sn** | 2,49 sn |
-  | 50 milyona kadar asal eleği | 0,63 sn | 0,44 sn | **0,26 sn** (`vector<bool>`) |
-  | Aynı döngü 16 çekirdekte | 0,52 sn (`parallel repeat`) | — | **0,32 sn** (`std::thread`) |
+  | Mandelbrot 2000×2000 (ondalıklı hesap) | **0,35 sn** | 0,59 sn | 0,59 sn |
+  | 5 milyon sayıyı sıralama | **0,17 sn** | 0,98 sn (`qsort`) | 0,26 sn (`std::sort`) |
+  | 2 milyar turluk tam sayı döngüsü | 2,84 sn | 2,49 sn | **2,47 sn** |
+  | 50 milyona kadar asal eleği | 0,47 sn | 0,44 sn | **0,27 sn** (bit bit `vector<bool>`) |
+  | Aynı döngü 16 çekirdekte | **0,27 sn** (`parallel repeat`) | — | 0,32 sn (`std::thread`) |
 
-  Vash her tam sayı işleminde taşma kontrolü yapar; döngülerdeki farkın çoğu bu.
+  C++'ın önde olduğu yerlerde Vash güvenlik bedeli ödüyor: her tam sayı toplamasında taşmayı kontrol ediyor ve paralel
+  yazmalar asla çakışmasın diye her `bool`'u bir bayt tutuyor.
 - **Güvenli.** Değerler kopya gibi davranır (değişince kopyalanır, takma ad hatası olmaz); tam sayı taşması ve liste dışına çıkma
   çalışma hatasıdır; çöp toplayıcı duraklaması yoktur (referans sayımı ve `arena { }` blokları).
 - **İzinler dilin içinde.** Dosyaya, internete, ekrana dokunan ya da komut çalıştıran fonksiyon bunu yazmak zorundadır

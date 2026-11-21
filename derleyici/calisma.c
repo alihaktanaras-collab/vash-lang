@@ -576,6 +576,23 @@ void liste_ekle(Liste *l, int64_t deger) {
     veri_koy(l, l->uzunluk++, deger);
 }
 
+/* repeat N { liste.add(sabit) } kalıbı: N tane aynı değeri tek seferde ekle (sayı/bool listeleri) */
+void liste_doldur(Liste *l, int64_t kac, int64_t deger) {
+    if (kac <= 0) return;
+    int64_t yeni = l->uzunluk + kac;
+    if (yeni > l->kapasite) {
+        int64_t kap = l->kapasite ? l->kapasite * 2 : 4;
+        if (kap < yeni) kap = yeni;
+        int64_t *v = realloc(l->veri, eleman_boyu(l->tur) * (size_t)kap);
+        if (!v) hafiza_doldu();
+        l->veri = v;
+        l->kapasite = kap;
+    }
+    if (l->tur == T_BOOL) memset((uint8_t *)l->veri + l->uzunluk, deger != 0, (size_t)kac);
+    else for (int64_t i = 0; i < kac; i++) l->veri[l->uzunluk + i] = deger;
+    l->uzunluk = yeni;
+}
+
 void liste_sil(Liste *l, int64_t sira, int64_t satir) {
     sinir_kontrolu(l, sira, satir);
     eleman_birak(l->tur, veri_al(l, sira - 1));
@@ -648,7 +665,49 @@ void liste_sirala(Liste *l, Once once) {
     free(gecici);
 }
 
+/* Taban sıralaması (radix, LSD, 16 bitlik 4 basamak): karşılaştırmasız, kararlı, O(n).
+   Tam sayılarda işaret biti çevrilir; ondalıklarda negatiflerin bütün bitleri çevrilir (IEEE sırası);
+   -0.0, +0.0 sayılır (birleştirmeli sıralamadaki gibi eşit kalsınlar). */
+static inline uint64_t taban_anahtar(uint64_t u, int ondalik) {
+    if (!ondalik) return u ^ 0x8000000000000000ULL;
+    if (u == 0x8000000000000000ULL) u = 0;
+    return (u >> 63) ? ~u : (u ^ 0x8000000000000000ULL);
+}
+
+static void taban_sirala(uint64_t *v, int64_t n, int ondalik) {
+    uint64_t *g = malloc(sizeof(uint64_t) * (size_t)n);
+    size_t *sayim = calloc(4 * 65536, sizeof(size_t));
+    if (!g || !sayim) hafiza_doldu();
+    for (int64_t i = 0; i < n; i++) {
+        uint64_t k = taban_anahtar(v[i], ondalik);
+        sayim[0 * 65536 + (k & 0xFFFF)]++;
+        sayim[1 * 65536 + ((k >> 16) & 0xFFFF)]++;
+        sayim[2 * 65536 + ((k >> 32) & 0xFFFF)]++;
+        sayim[3 * 65536 + (k >> 48)]++;
+    }
+    uint64_t *kaynak = v, *hedef = g;
+    for (int b = 0; b < 4; b++) {
+        size_t *c = sayim + b * 65536;
+        uint64_t ilk = (taban_anahtar(kaynak[0], ondalik) >> (16 * b)) & 0xFFFF;
+        if (c[ilk] == (size_t)n) continue;            /* herkes aynı basamakta: bu tur boşuna */
+        size_t top = 0;
+        for (int d = 0; d < 65536; d++) { size_t x = c[d]; c[d] = top; top += x; }
+        for (int64_t i = 0; i < n; i++) {
+            uint64_t u = kaynak[i];
+            hedef[c[(taban_anahtar(u, ondalik) >> (16 * b)) & 0xFFFF]++] = u;
+        }
+        uint64_t *t = kaynak; kaynak = hedef; hedef = t;
+    }
+    if (kaynak != v) memcpy(v, kaynak, sizeof(uint64_t) * (size_t)n);
+    free(sayim);
+    free(g);
+}
+
 void liste_sirala_dogal(Liste *l) {
+    if ((l->tur == T_INT || l->tur == T_FLOAT) && l->uzunluk >= 4096) {
+        taban_sirala((uint64_t *)l->veri, l->uzunluk, l->tur == T_FLOAT);
+        return;
+    }
     switch (l->tur) {
         case T_INT:   liste_sirala(l, once_int); break;
         case T_FLOAT: liste_sirala(l, once_float); break;

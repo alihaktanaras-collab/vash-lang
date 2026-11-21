@@ -32,6 +32,7 @@
 
 import struct
 
+from parser import Dugum
 from parser import (
     DegiskenTanimi, UseKomutu, Atama, FonksiyonTanimi, Donus, IfadeKomutu,
     Eger, TekrarSayi, TekrarSurece, TekrarSayac, Dur, Atla,
@@ -151,6 +152,7 @@ declare void @liste_birak(ptr)
 declare i64 @liste_al(ptr, i64, i64)
 declare void @liste_koy(ptr, i64, i64, i64)
 declare void @liste_ekle(ptr, i64)
+declare void @liste_doldur(ptr, i64, i64)
 declare void @liste_sil(ptr, i64, i64)
 declare i64 @liste_uzunluk(ptr)
 declare ptr @liste_yazilabilir(ptr)
@@ -1030,7 +1032,68 @@ class LLVMUretici:
     #     ilerle:    (sayacı artır)  → kontrol'e geri atla      ← skip buraya atlar
     #     cikis:                                               ← stop buraya atlar
     #
-    def dongu_iskeleti(self, kontrol_uret, ilerle_uret, govde):
+    # ---- Döngüden önce bir kez "kendine ait yap" (Vash derleyicisindeki _tek_sahip_baslat ile aynı) ----
+    @staticmethod
+    def _dugum_cocuklari(d):
+        for v in vars(d).values():
+            if isinstance(v, Dugum):
+                yield v
+            elif isinstance(v, (list, tuple)):
+                for x in v:
+                    if isinstance(x, Dugum):
+                        yield x
+
+    def _eleman_yazilan_adlar(self, d, adlar):
+        if type(d).__name__ == "ElemanAtama" and not getattr(d, "sozluk", False) and type(d.liste).__name__ == "Isim":
+            t = getattr(d.liste, "tip", "") or ""
+            if t.startswith("[") and not sayacli(t[1:-1]) and d.liste.ad not in adlar:
+                adlar.append(d.liste.ad)
+        for c in self._dugum_cocuklari(d):
+            self._eleman_yazilan_adlar(c, adlar)
+        return adlar
+
+    def _sadece_eleman(self, d, ad):
+        tur = type(d).__name__
+        if tur == "Isim":
+            return d.ad != ad
+        if tur in ("Atama", "DegiskenTanimi") and d.ad == ad:
+            return False
+        if tur == "ElemanAtama" and type(d.liste).__name__ == "Isim" and d.liste.ad == ad:
+            return self._sadece_eleman(d.sira, ad) and self._sadece_eleman(d.deger, ad)
+        if tur == "Erisim" and type(d.liste).__name__ == "Isim" and d.liste.ad == ad:
+            return self._sadece_eleman(d.sira, ad)
+        if tur == "Ozellik" and d.ad == "length" and type(d.nesne).__name__ == "Isim" and d.nesne.ad == ad:
+            return True
+        return all(self._sadece_eleman(c, ad) for c in self._dugum_cocuklari(d))
+
+    def _izleniyor_mu(self, adres):
+        return adres in self.izleyiciler or any(adres in w["adresler"] for w in self.yerel_whenler)
+
+    def _tek_sahip_baslat(self, dugumler):
+        adlar = []
+        for d in dugumler:
+            self._eleman_yazilan_adlar(d, adlar)
+        eklenen = []
+        for ad in sorted(adlar):
+            if ad not in self.kapsam:
+                continue
+            adres = self.kapsam[ad][0]
+            if not adres.startswith("%") or adres in self.tek_sahipli or self._izleniyor_mu(adres):
+                continue
+            if not all(self._sadece_eleman(d, ad) for d in dugumler):
+                continue
+            p, p2 = self.yeni(), self.yeni()
+            self.yaz(f"{p} = load ptr, ptr {adres}")
+            self.yaz(f"{p2} = call ptr @liste_yazilabilir(ptr {p})")
+            self.yaz(f"store ptr {p2}, ptr {adres}")
+            self.tek_sahipli.append(adres)
+            eklenen.append(adres)
+        return eklenen
+
+    def dongu_iskeleti(self, kontrol_uret, ilerle_uret, govde, kosul=None):
+        if not hasattr(self, "tek_sahipli"):
+            self.tek_sahipli = []
+        tek_sahipler = self._tek_sahip_baslat(list(govde) + ([kosul] if kosul is not None else []))
         kontrol, govde_e, ilerle, cikis = (self.etiket("kontrol"), self.etiket("govde"),
                                           self.etiket("ilerle"), self.etiket("cikis"))
         self.yaz(f"br label %{kontrol}")
@@ -1050,10 +1113,37 @@ class LLVMUretici:
         self.yaz(f"br label %{kontrol}")
 
         self.blok_baslat(cikis)
+        self.tek_sahipli = [a for a in self.tek_sahipli if a not in tek_sahipler]
+
+    def _doldurma_kalibi(self, k):
+        """repeat N { l.add(sabit) } → (liste adı, değer) ya da None (Vash derleyicisindeki ile aynı)"""
+        if len(k.govde) != 1 or type(k.govde[0]).__name__ != "IfadeKomutu":
+            return None
+        e = k.govde[0].ifade
+        if type(e).__name__ != "MetotCagrisi" or e.ad != "add":
+            return None
+        if type(e.nesne).__name__ != "Isim" or len(e.argumanlar) != 1:
+            return None
+        a = e.argumanlar[0]
+        tip = getattr(e.nesne, "tip", "")
+        if tip == "[bool]" and type(a).__name__ == "Mantiksal":
+            deger = "1" if a.deger in (True, "true") else "0"
+        elif tip == "[int]" and type(a).__name__ == "Sayi":
+            deger = str(a.deger)
+        else:
+            return None
+        if e.nesne.ad not in self.kapsam or self._izleniyor_mu(self.kapsam[e.nesne.ad][0]):
+            return None
+        return e.nesne.ad, deger
 
     def tekrar_sayi(self, k):
         """repeat 3 { }  →  gizli bir sayaç 0'dan başlar, 3 olunca durur."""
         kac = self.ifade(k.sayi)
+        kalip = self._doldurma_kalibi(k)
+        if kalip:
+            liste = self.yazilabilir_liste(kalip[0])
+            self.yaz(f"call void @liste_doldur(ptr {liste}, i64 {kac}, i64 {kalip[1]})")
+            return
         sayac = self.yerel_ayir(f"gizli_sayac{self.sayac}", "int")
         self.yaz(f"store i64 0, ptr {sayac}")
 
@@ -1074,7 +1164,7 @@ class LLVMUretici:
 
     def tekrar_surece(self, k):
         """repeat while kosul { }  →  her turdan önce şartı yeniden hesapla."""
-        self.dongu_iskeleti(lambda: self.ifade(k.kosul), lambda cikis: None, k.govde)
+        self.dongu_iskeleti(lambda: self.ifade(k.kosul), lambda cikis: None, k.govde, k.kosul)
 
     def tekrar_sayac(self, k):
         """repeat i from A to B step C { }"""
@@ -1946,6 +2036,7 @@ class LLVMUretici:
     # döngülerde bu okumaları döngünün dışına çıkarabilir.
     TBAA_BASLIK = "!tbaa !9002"
     TBAA_ELEMAN = "!tbaa !9004"
+    TBAA_BAYT = "!tbaa !9007"            # [bool] elemanları (1 bayt): başlıkla karışmaz
     TBAA_TANIMLARI = [
         '!9000 = !{!"Vash TBAA"}',
         '!9001 = !{!"liste.baslik", !9000, i64 0}',
@@ -1956,6 +2047,8 @@ class LLVMUretici:
         # Bu bilgiyle LLVM, sınır kontrolünden geçen bir sıra numarasının küçük olduğunu anlar ve
         # o sayıyla yapılan hesaplardaki gereksiz taşma kontrollerini kendisi silebilir.
         '!9005 = !{i64 0, i64 1152921504606846976}',
+        '!9006 = !{!"liste.bayt", !9000, i64 0}',
+        '!9007 = !{!9006, !9006, i64 0}',
     ]
 
     def liste_alani(self, l, ofset, tip="i64"):
@@ -2003,6 +2096,21 @@ class LLVMUretici:
         if sayacli(eleman_tipi):
             liste = self.yazilabilir_liste(k.liste.ad)
             self.yaz(f"call void @liste_koy(ptr {liste}, i64 {sira}, i64 {kutu}, i64 {k.satir})")
+        elif adres in getattr(self, "tek_sahipli", []):
+            p = self.yeni()                       # döngüden önce kendine ait yapıldı: kontrol yok
+            self.yaz(f"{p} = load ptr, ptr {adres}")
+            n = self.liste_uzunlugu(p)
+            veri = self.liste_alani(p, 32, "ptr")
+            s0 = self.sinir_kontrolu(p, sira, n, k.satir)
+            ey = self.yeni()
+            if eleman_tipi == "bool":
+                b8 = self.yeni()
+                self.yaz(f"{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
+                self.yaz(f"{b8} = trunc i64 {kutu} to i8")
+                self.yaz(f"store i8 {b8}, ptr {ey}, {self.TBAA_BAYT}")
+            else:
+                self.yaz(f"{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")
+                self.yaz(f"store i64 {kutu}, ptr {ey}, {self.TBAA_ELEMAN}")
         else:
             p = self.yeni()
             self.yaz(f"{p} = load ptr, ptr {adres}")
@@ -2028,7 +2136,7 @@ class LLVMUretici:
                 b8 = self.yeni()
                 self.yaz(f"{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
                 self.yaz(f"{b8} = trunc i64 {kutu} to i8")
-                self.yaz(f"store i8 {b8}, ptr {ey}")
+                self.yaz(f"store i8 {b8}, ptr {ey}, {self.TBAA_BAYT}")
             else:
                 self.yaz(f"{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")
                 self.yaz(f"store i64 {kutu}, ptr {ey}, {self.TBAA_ELEMAN}")
@@ -2048,7 +2156,7 @@ class LLVMUretici:
         if tip == "bool":                          # [bool]: her eleman 1 bayt
             b8 = self.yeni()
             self.yaz(f"{ey} = getelementptr inbounds i8, ptr {veri}, i64 {s0}")
-            self.yaz(f"{b8} = load i8, ptr {ey}")
+            self.yaz(f"{b8} = load i8, ptr {ey}, {self.TBAA_BAYT}")
             self.yaz(f"{kutu} = zext i8 {b8} to i64")
             return kutu
         self.yaz(f"{ey} = getelementptr inbounds i64, ptr {veri}, i64 {s0}")

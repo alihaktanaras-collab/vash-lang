@@ -54,13 +54,14 @@ print("total:", total, "saved:", save("ok\n"))
 
   | Program | Vash | C | C++ |
   |---|---|---|---|
-  | Mandelbrot 2000×2000 (floating point) | **0.32 s** | 0.55 s | 0.56 s |
-  | Sort 5 million integers | 0.50 s | 0.92 s (`qsort`) | **0.24 s** (`std::sort`) |
-  | 2 billion iteration integer loop | 2.81 s | **2.47 s** | 2.49 s |
-  | Prime sieve up to 50 million | 0.63 s | 0.44 s | **0.26 s** (`vector<bool>`) |
-  | Same loop on all 16 cores | 0.52 s (`parallel repeat`) | — | **0.32 s** (`std::thread`) |
+  | Mandelbrot 2000×2000 (floating point) | **0.35 s** | 0.59 s | 0.59 s |
+  | Sort 5 million integers | **0.17 s** | 0.98 s (`qsort`) | 0.26 s (`std::sort`) |
+  | 2 billion iteration integer loop | 2.84 s | 2.49 s | **2.47 s** |
+  | Prime sieve up to 50 million | 0.47 s | 0.44 s | **0.27 s** (bit-packed `vector<bool>`) |
+  | Same loop on all 16 cores | **0.27 s** (`parallel repeat`) | — | 0.32 s (`std::thread`) |
 
-  Vash checks every integer operation for overflow; that is most of the gap on integer loops.
+  Where C++ wins, Vash is paying for safety: it checks every integer addition for overflow, and keeps one byte per `bool`
+  so that parallel writes can never race.
 - **Safe.** Values behave like copies (copy-on-write, no aliasing bugs), integer overflow and out-of-range indexes are runtime errors,
   no garbage collector pauses (reference counting + `arena { }` blocks).
 - **Permissions in the type system.** A function that touches files, the network, the screen or runs commands must say so
